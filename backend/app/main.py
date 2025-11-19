@@ -31,9 +31,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]
+    expose_headers=["*"],
+    max_age=3600
 )
 
 
@@ -64,17 +65,14 @@ async def health_check():
 
 
 # Import and include routers
-from app.routes import auth, courses, tasks
+from app.routes import auth, courses, tasks, cgpa, recommendations, mood
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(courses.router, prefix="/api/v1/courses", tags=["Courses"])
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["Tasks"])
-
-# TODO: Add other routers
-# from app.routes import users, moods, gpa
-# app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
-# app.include_router(moods.router, prefix="/api/v1/moods", tags=["Moods"])
-# app.include_router(gpa.router, prefix="/api/v1/gpa", tags=["GPA"])
+app.include_router(cgpa.router, prefix="/api/v1", tags=["CGPA"])
+app.include_router(recommendations.router, prefix="/api/v1", tags=["Recommendations"])
+app.include_router(mood.router, prefix="/api/v1/mood", tags=["Mood Tracking"])
 
 
 if __name__ == "__main__":

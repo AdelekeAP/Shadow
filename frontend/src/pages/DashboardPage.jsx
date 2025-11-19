@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { getCurrentUser, isAuthenticated, logout, getEnrolledCourses, getTasks, getTaskStats } from '../services/api'
 import TaskList from '../components/TaskList'
 import AddTaskModal from '../components/AddTaskModal'
+import PriorityRecommendations from '../components/PriorityRecommendations'
+import MoodLogger from '../components/MoodLogger'
 
 function DashboardPage() {
   const navigate = useNavigate()
@@ -99,6 +101,12 @@ function DashboardPage() {
                 className="text-blue-600 hover:text-blue-700 font-medium"
               >
                 Browse Courses
+              </button>
+              <button
+                onClick={() => navigate('/cgpa')}
+                className="text-purple-600 hover:text-purple-700 font-medium"
+              >
+                📊 CGPA Analytics
               </button>
               <div className="flex items-center gap-3">
                 <span className="text-gray-700 font-medium">{user?.full_name || 'User'}</span>
@@ -233,6 +241,11 @@ function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* Priority Recommendations */}
+        <div className="mb-8">
+          <PriorityRecommendations />
+        </div>
 
         {/* Tasks Section */}
         <div className="mb-8">
@@ -392,6 +405,9 @@ function DashboardPage() {
         onTaskCreated={handleTaskCreated}
         enrolledCourses={enrolledCourses}
       />
+
+      {/* Mood Logger - Floating Button */}
+      <MoodLogger onMoodLogged={() => console.log('Mood logged!')} />
     </div>
   )
 }
