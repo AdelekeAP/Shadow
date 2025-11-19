@@ -8,6 +8,10 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 import os
 from dotenv import load_dotenv
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from app.database import get_db
 
 load_dotenv()
 
@@ -110,16 +114,20 @@ def verify_token(token: str) -> Optional[str]:
     return None
 
 
+# OAuth2 scheme for token extraction
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
 async def get_current_user(
-    token: str,
-    db
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
 ):
     """
     Dependency to get current authenticated user
 
     Args:
-        token: JWT token from Authorization header
-        db: Database session
+        token: JWT token from Authorization header (extracted via oauth2_scheme)
+        db: Database session (injected via Depends)
 
     Returns:
         User object
@@ -127,7 +135,6 @@ async def get_current_user(
     Raises:
         HTTPException: If token is invalid or user not found
     """
-    from fastapi import HTTPException, status
     from app.models.user import User
 
     credentials_exception = HTTPException(

@@ -2,6 +2,7 @@
 Authentication Routes - Register, Login, Get Current User
 """
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -11,10 +12,12 @@ from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token
 from app.utils.auth import (
     get_password_hash,
     verify_password,
-    create_access_token
+    create_access_token,
+    decode_access_token
 )
 
 router = APIRouter()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
@@ -136,6 +139,61 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
     )
 
 
-# TODO: Implement get_current_user endpoint with proper authentication dependency
-# @router.get("/me", response_model=UserResponse)
-# async def get_current_user(...):
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    """
+    Get current authenticated user from JWT token
+
+    Args:
+        token: JWT access token from Authorization header
+        db: Database session
+
+    Returns:
+        Current authenticated user
+
+    Raises:
+        HTTPException: If token is invalid or user not found
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    # Decode token
+    payload = decode_access_token(token)
+    if payload is None:
+        raise credentials_exception
+
+    email: str = payload.get("sub")
+    if email is None:
+        raise credentials_exception
+
+    # Get user from database by email
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise credentials_exception
+
+    return user
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user)):
+    """
+    Get current user profile
+
+    Args:
+        current_user: Current authenticated user
+
+    Returns:
+        User profile data
+    """
+    return UserResponse(
+        id=current_user.id,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        university_id=current_user.university_id,
+        entry_level=current_user.entry_level,
+        target_cgpa=current_user.target_cgpa,
+        current_cgpa=current_user.current_cgpa,
+        gpa_scale=current_user.gpa_scale
+    )

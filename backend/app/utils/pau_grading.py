@@ -220,3 +220,45 @@ def validate_ca_allocation(tasks: list) -> Dict[str, any]:
         "max_ca": CA_ASSESSMENTS,
         "participation": CA_PARTICIPATION
     }
+
+
+# Class-based API for convenience
+class PAUGradingSystem:
+    """PAU Grading System - Class-based wrapper for functional utilities"""
+
+    @staticmethod
+    def get_letter_grade(score: float) -> str:
+        """Get letter grade from score"""
+        return get_letter_grade(score)
+
+    @staticmethod
+    def get_grade_point(score: float) -> float:
+        """Get grade point from score"""
+        return get_grade_point(score)
+
+    @staticmethod
+    def calculate_cgpa(courses: list) -> float:
+        """Calculate CGPA"""
+        return calculate_cgpa(courses)
+
+    @staticmethod
+    def get_classification(cgpa: float) -> str:
+        """Get degree classification"""
+        return get_classification(cgpa)
+
+    @staticmethod
+    def calculate_course_grade(
+        ca_tasks_score: float,
+        participation_score: Optional[float] = None,
+        exam_score: Optional[float] = None,
+        completion_rate: float = 0.75,
+        course_difficulty: float = 1.0
+    ) -> Dict[str, any]:
+        """Calculate course grade"""
+        return calculate_course_grade(
+            ca_tasks_score,
+            participation_score,
+            exam_score,
+            completion_rate,
+            course_difficulty
+        )
