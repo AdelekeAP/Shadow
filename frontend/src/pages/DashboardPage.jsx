@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { getCurrentUser, isAuthenticated, logout, getEnrolledCourses, getTasks, getTaskStats } from '../services/api'
 import TaskList from '../components/TaskList'
 import AddTaskModal from '../components/AddTaskModal'
-import PriorityRecommendations from '../components/PriorityRecommendations'
+import PriorityRecommendationsCompact from '../components/PriorityRecommendationsCompact'
 import MoodLogger from '../components/MoodLogger'
+import CourseCarousel from '../components/CourseCarousel'
 
 function DashboardPage() {
   const navigate = useNavigate()
@@ -14,6 +15,9 @@ function DashboardPage() {
   const [taskStats, setTaskStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showAddTaskModal, setShowAddTaskModal] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [showMoodLogger, setShowMoodLogger] = useState(false)
+  const [todayMood, setTodayMood] = useState(null)
 
   useEffect(() => {
     // Check authentication
@@ -68,15 +72,34 @@ function DashboardPage() {
     loadEnrolledCourses() // Reload to update CA scores
   }
 
+  const handlePriorityTaskClick = (taskId) => {
+    // Scroll to task list section
+    const taskSection = document.getElementById('task-section')
+    if (taskSection) {
+      taskSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
+      // Highlight the task briefly
+      setTimeout(() => {
+        const taskElement = document.querySelector(`[data-task-id="${taskId}"]`)
+        if (taskElement) {
+          taskElement.classList.add('ring-4', 'ring-navy-500', 'ring-opacity-50')
+          setTimeout(() => {
+            taskElement.classList.remove('ring-4', 'ring-navy-500', 'ring-opacity-50')
+          }, 2000)
+        }
+      }, 500)
+    }
+  }
+
   const handleLogout = () => {
     logout()
   }
 
   const getGradeColor = (gradePoint) => {
-    if (!gradePoint) return 'text-gray-400'
+    if (!gradePoint) return 'text-stone-400'
     if (gradePoint >= 4.5) return 'text-green-600'
-    if (gradePoint >= 3.5) return 'text-blue-600'
-    if (gradePoint >= 2.5) return 'text-yellow-600'
+    if (gradePoint >= 3.5) return 'text-navy-800'
+    if (gradePoint >= 2.5) return 'text-amber-600'
     return 'text-red-600'
   }
 
@@ -87,84 +110,128 @@ function DashboardPage() {
     : 0
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
+    <div className="min-h-screen bg-stone-50">
+      <nav className="bg-white shadow-sm border-b border-stone-200 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
-              <h1 className="text-2xl font-bold text-blue-600">Shadow</h1>
-              <span className="ml-2 text-sm text-gray-500">Academic Achievement System</span>
+              <h1 className="text-2xl font-bold text-navy-800">Shadow</h1>
+              <span className="ml-2 text-sm text-stone-500 hidden sm:inline">Academic Achievement System</span>
             </div>
-            <div className="flex items-center gap-4">
+
+            {/* Desktop nav */}
+            <div className="hidden md:flex items-center gap-4">
               <button
                 onClick={() => navigate('/courses')}
-                className="text-blue-600 hover:text-blue-700 font-medium"
+                className="text-stone-600 hover:text-navy-800 font-medium transition-colors"
+              >
+                Courses
+              </button>
+              <button
+                onClick={() => navigate('/cgpa')}
+                className="text-stone-600 hover:text-navy-800 font-medium transition-colors"
+              >
+                CGPA
+              </button>
+              <div className="h-6 w-px bg-stone-200" />
+              <span className="text-stone-700 font-medium">{user?.full_name || 'User'}</span>
+              <button
+                onClick={handleLogout}
+                className="text-sm text-stone-500 hover:text-red-600 transition-colors"
+              >
+                Logout
+              </button>
+            </div>
+
+            {/* Mobile burger */}
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="md:hidden p-2 text-stone-600 hover:text-navy-800"
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {menuOpen ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile menu */}
+        {menuOpen && (
+          <div className="md:hidden border-t border-stone-200 bg-white animate-fade-in">
+            <div className="px-4 py-3 space-y-2">
+              <button
+                onClick={() => { navigate('/courses'); setMenuOpen(false); }}
+                className="block w-full text-left px-3 py-2 rounded-lg text-stone-700 hover:bg-stone-100 font-medium"
               >
                 Browse Courses
               </button>
               <button
-                onClick={() => navigate('/cgpa')}
-                className="text-purple-600 hover:text-purple-700 font-medium"
+                onClick={() => { navigate('/cgpa'); setMenuOpen(false); }}
+                className="block w-full text-left px-3 py-2 rounded-lg text-stone-700 hover:bg-stone-100 font-medium"
               >
-                📊 CGPA Analytics
+                CGPA Analytics
               </button>
-              <div className="flex items-center gap-3">
-                <span className="text-gray-700 font-medium">{user?.full_name || 'User'}</span>
+              <div className="border-t border-stone-200 pt-2 mt-2">
+                <div className="px-3 py-2 text-sm text-stone-500">{user?.full_name || 'User'}</div>
                 <button
                   onClick={handleLogout}
-                  className="text-sm text-gray-600 hover:text-gray-800"
+                  className="block w-full text-left px-3 py-2 rounded-lg text-red-600 hover:bg-red-50 font-medium"
                 >
                   Logout
                 </button>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900">Dashboard</h2>
-          <p className="text-gray-600 mt-2">Welcome back! Here's your academic overview.</p>
+          <h2 className="text-3xl font-bold text-stone-900">Dashboard</h2>
+          <p className="text-stone-600 mt-2">Welcome back! Here's your academic overview.</p>
         </div>
 
         {/* CGPA Overview */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-gradient-to-br from-navy-800 to-navy-900 rounded-2xl shadow-lg p-6 mb-6 text-white">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div>
-              <p className="text-sm text-gray-600 mb-1">Current CGPA</p>
-              <p className="text-4xl font-bold text-blue-600">
+              <p className="text-sm text-white/70 mb-1">Current CGPA</p>
+              <p className="text-4xl font-bold">
                 {user?.current_cgpa?.toFixed(2) || '0.00'}
               </p>
             </div>
             <div>
-              <p className="text-sm text-gray-600 mb-1">Target CGPA</p>
-              <p className="text-4xl font-bold text-gray-900">
+              <p className="text-sm text-white/70 mb-1">Target CGPA</p>
+              <p className="text-4xl font-bold text-amber-300">
                 {user?.target_cgpa?.toFixed(2) || 'N/A'}
               </p>
             </div>
             <div>
-              <p className="text-sm text-gray-600 mb-1">Total Credits</p>
-              <p className="text-4xl font-bold text-purple-600">{user?.total_credits_completed || 0}</p>
+              <p className="text-sm text-white/70 mb-1">Total Credits</p>
+              <p className="text-4xl font-bold">{user?.total_credits_completed || 0}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-600 mb-1">Status</p>
-              <p className="text-2xl font-bold text-green-600">
-                {(user?.current_cgpa || 0) >= (user?.target_cgpa || 4.5) ? 'On Track ✓' : 'Keep Going 💪'}
+              <p className="text-sm text-white/70 mb-1">Status</p>
+              <p className="text-2xl font-bold text-emerald-400">
+                {(user?.current_cgpa || 0) >= (user?.target_cgpa || 4.5) ? 'On Track' : 'Keep Going'}
               </p>
             </div>
           </div>
           {user?.target_cgpa && (
             <div className="mt-6">
-              <div className="w-full bg-gray-200 rounded-full h-2">
+              <div className="w-full bg-white/20 rounded-full h-2.5">
                 <div
-                  className="bg-green-600 h-2 rounded-full"
+                  className="bg-gradient-to-r from-emerald-400 to-emerald-300 h-2.5 rounded-full transition-all duration-500"
                   style={{
                     width: `${Math.min(100, ((user?.current_cgpa || 0) / user.target_cgpa) * 100)}%`
                   }}
                 ></div>
               </div>
-              <p className="text-sm text-gray-600 mt-2">
+              <p className="text-sm text-white/70 mt-2">
                 {user?.current_cgpa
                   ? `${Math.round(((user.current_cgpa / user.target_cgpa) * 100))}% toward target`
                   : 'Complete courses to see progress'}
@@ -173,67 +240,167 @@ function DashboardPage() {
           )}
         </div>
 
-        {/* Semester Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="text-3xl font-bold text-gray-900">{enrolledCourses.length}</div>
-            <div className="text-sm text-gray-600 mt-1">Enrolled Courses</div>
+        {/* Auto-scrolling Course Carousel - Shows enrolled courses with grades */}
+        {enrolledCourses.length > 0 && (
+          <div className="mb-8">
+            <CourseCarousel
+              enrolledCourses={enrolledCourses}
+              onCourseClick={(enrollment) => {
+                // Open add task modal with course pre-selected
+                setShowAddTaskModal(true)
+              }}
+            />
           </div>
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="text-3xl font-bold text-gray-900">{totalCredits}</div>
-            <div className="text-sm text-gray-600 mt-1">Credit Hours</div>
+        )}
+
+        {/* Semester Stats + Mood Widget */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5 flex items-center gap-4 hover:shadow-md transition-shadow">
+            <div className="w-12 h-12 rounded-xl bg-navy-100 flex items-center justify-center">
+              <svg className="w-6 h-6 text-navy-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-stone-900">{enrolledCourses.length}</div>
+              <div className="text-sm text-stone-500">Enrolled Courses</div>
+            </div>
           </div>
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="text-3xl font-bold text-gray-900">{averageCA.toFixed(1)}/35</div>
-            <div className="text-sm text-gray-600 mt-1">Average CA Score</div>
+          <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5 flex items-center gap-4 hover:shadow-md transition-shadow">
+            <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center">
+              <svg className="w-6 h-6 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+              </svg>
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-stone-900">{totalCredits}</div>
+              <div className="text-sm text-stone-500">Credit Hours</div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5 flex items-center gap-4 hover:shadow-md transition-shadow">
+            <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center">
+              <svg className="w-6 h-6 text-amber-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-stone-900">{averageCA.toFixed(1)}/35</div>
+              <div className="text-sm text-stone-500">Average CA Score</div>
+            </div>
+          </div>
+
+          {/* Mood Insights Widget */}
+          <div
+            onClick={() => setShowMoodLogger(true)}
+            className={`bg-gradient-to-br from-teal-50 to-teal-100 border-2 rounded-xl p-5 cursor-pointer hover:shadow-lg transition-all relative overflow-hidden ${
+              !todayMood ? 'border-teal-300 animate-pulse' : 'border-teal-200 hover:border-teal-300'
+            }`}
+          >
+            {/* Sparkle effect for unlogged */}
+            {!todayMood && (
+              <div className="absolute top-2 right-2">
+                <svg className="w-5 h-5 text-teal-500 animate-bounce" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                </svg>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-bold text-teal-900">How's your day?</span>
+              {todayMood && (
+                <span className="text-xs font-semibold text-teal-700 bg-teal-200 px-2 py-0.5 rounded-full">
+                  ✓ Logged
+                </span>
+              )}
+            </div>
+
+            {todayMood ? (
+              <div className="text-center">
+                <div className="text-4xl mb-2">
+                  {todayMood.mood_type === 'focused' ? '🎯' :
+                   todayMood.mood_type === 'motivated' ? '💪' :
+                   todayMood.mood_type === 'calm' ? '😌' :
+                   todayMood.mood_type === 'confident' ? '😎' :
+                   todayMood.mood_type === 'tired' ? '😴' :
+                   todayMood.mood_type === 'stressed' ? '😰' :
+                   todayMood.mood_type === 'anxious' ? '😟' :
+                   todayMood.mood_type === 'overwhelmed' ? '😵' : '😊'}
+                </div>
+                <p className="text-sm font-bold text-teal-900 capitalize mb-1">{todayMood.mood_type}</p>
+                <div className="flex items-center justify-center gap-1 text-xs text-teal-700">
+                  {[...Array(5)].map((_, i) => (
+                    <span key={i}>
+                      {i < todayMood.energy_level ? '⚡' : '○'}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center">
+                <div className="text-3xl mb-2">💭</div>
+                <p className="text-xs font-semibold text-teal-900 mb-1">Track your wellness</p>
+                <p className="text-xs text-teal-600">Click to log</p>
+              </div>
+            )}
+
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowMoodLogger(true); }}
+              className={`mt-3 w-full py-2 text-xs font-bold rounded-lg transition-all ${
+                todayMood
+                  ? 'bg-teal-200 hover:bg-teal-300 text-teal-900'
+                  : 'bg-teal-600 hover:bg-teal-700 text-white shadow-md'
+              }`}
+            >
+              {todayMood ? 'Update Mood' : '💭 Log Mood'}
+            </button>
           </div>
         </div>
 
         {/* Task Overview */}
         {taskStats && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">Task Overview</h3>
+          <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-6 mb-8">
+            <h3 className="text-xl font-bold text-stone-900 mb-4">Task Overview</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               <div>
-                <div className="text-2xl font-bold text-blue-600">{taskStats.total_tasks}</div>
-                <div className="text-sm text-gray-600">Total Tasks</div>
+                <div className="text-2xl font-bold text-navy-800">{taskStats.total_tasks}</div>
+                <div className="text-sm text-stone-600">Total Tasks</div>
               </div>
               <div>
                 <div className="text-2xl font-bold text-green-600">{taskStats.completed_tasks}</div>
-                <div className="text-sm text-gray-600">Completed</div>
+                <div className="text-sm text-stone-600">Completed</div>
               </div>
               <div>
-                <div className="text-2xl font-bold text-yellow-600">{taskStats.pending_tasks}</div>
-                <div className="text-sm text-gray-600">Pending</div>
+                <div className="text-2xl font-bold text-amber-600">{taskStats.pending_tasks}</div>
+                <div className="text-sm text-stone-600">Pending</div>
               </div>
               <div>
                 <div className="text-2xl font-bold text-red-600">{taskStats.overdue_tasks}</div>
-                <div className="text-sm text-gray-600">Overdue</div>
+                <div className="text-sm text-stone-600">Overdue</div>
               </div>
             </div>
-            <div className="mt-4 pt-4 border-t border-gray-200">
+            <div className="mt-4 pt-4 border-t border-stone-200">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <span className="text-sm text-gray-600">Total CA Earned (All Courses):</span>
+                  <span className="text-sm text-stone-600">Total CA Earned (All Courses):</span>
                   <div className="mt-1">
-                    <span className="text-lg font-bold text-gray-900">
+                    <span className="text-lg font-bold text-stone-900">
                       {taskStats.total_ca_earned.toFixed(1)}
                     </span>
-                    <span className="text-sm text-gray-500"> / {taskStats.total_ca_available.toFixed(1)} marks</span>
+                    <span className="text-sm text-stone-500"> / {taskStats.total_ca_available.toFixed(1)} marks</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-stone-500 mt-1">
                     Combined CA from {enrolledCourses.length} course{enrolledCourses.length !== 1 ? 's' : ''}
                   </p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-600">Task Completion:</span>
+                  <span className="text-sm text-stone-600">Task Completion:</span>
                   <div className="mt-1">
-                    <span className="text-lg font-bold text-blue-600">
+                    <span className="text-lg font-bold text-navy-800">
                       {taskStats.completion_rate.toFixed(0)}%
                     </span>
-                    <span className="text-sm text-gray-500"> ({taskStats.completed_tasks}/{taskStats.total_tasks})</span>
+                    <span className="text-sm text-stone-500"> ({taskStats.completed_tasks}/{taskStats.total_tasks})</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-stone-500 mt-1">
                     Tasks marked as done
                   </p>
                 </div>
@@ -244,17 +411,17 @@ function DashboardPage() {
 
         {/* Priority Recommendations */}
         <div className="mb-8">
-          <PriorityRecommendations />
+          <PriorityRecommendationsCompact onTaskClick={handlePriorityTaskClick} />
         </div>
 
         {/* Tasks Section */}
-        <div className="mb-8">
+        <div id="task-section" className="mb-8">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-bold text-gray-900">My Tasks</h3>
+            <h3 className="text-xl font-bold text-stone-900">My Tasks</h3>
             <button
               onClick={() => setShowAddTaskModal(true)}
               disabled={enrolledCourses.length === 0}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+              className="bg-navy-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-navy-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
             >
               <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -264,17 +431,17 @@ function DashboardPage() {
           </div>
 
           {enrolledCourses.length === 0 ? (
-            <div className="bg-white rounded-lg shadow-sm border-2 border-dashed border-gray-300 p-12 text-center">
-              <p className="text-gray-600 mb-4">Enroll in courses first to start adding tasks</p>
+            <div className="bg-white rounded-xl shadow-sm border-2 border-dashed border-stone-300 p-12 text-center">
+              <p className="text-stone-600 mb-4">Enroll in courses first to start adding tasks</p>
               <button
                 onClick={() => navigate('/courses')}
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                className="bg-navy-800 text-white px-6 py-3 rounded-lg font-medium hover:bg-navy-900 transition-colors"
               >
                 Browse Courses
               </button>
             </div>
           ) : (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-6">
               <TaskList
                 tasks={tasks}
                 onUpdate={handleTaskCreated}
@@ -285,117 +452,6 @@ function DashboardPage() {
           )}
         </div>
 
-        {/* Enrolled Courses */}
-        <div className="mb-6">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-bold text-gray-900">My Courses</h3>
-            {enrolledCourses.length > 0 && (
-              <button
-                onClick={() => navigate('/courses')}
-                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-              >
-                Manage Courses →
-              </button>
-            )}
-          </div>
-
-          {loading ? (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-              <p className="text-gray-600">Loading courses...</p>
-            </div>
-          ) : enrolledCourses.length === 0 ? (
-            <div className="bg-white rounded-lg shadow-sm border-2 border-dashed border-gray-300 p-12 text-center">
-              <p className="text-gray-600 mb-4">You haven't enrolled in any courses yet</p>
-              <button
-                onClick={() => navigate('/courses')}
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
-              >
-                + Browse Available Courses
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {enrolledCourses.map(enrollment => (
-                <div
-                  key={enrollment.id}
-                  className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
-                >
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h3 className="font-bold text-lg text-gray-900">{enrollment.course.code}</h3>
-                      <p className="text-sm text-gray-600 mt-1">{enrollment.course.title}</p>
-                    </div>
-                    {enrollment.is_priority && (
-                      <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded-full">
-                        Priority
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">CA Score:</span>
-                      <span className="font-semibold text-gray-900">
-                        {enrollment.ca_score.toFixed(1)}/35
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">EXAM Score:</span>
-                      <span className="font-semibold text-gray-900">
-                        {(enrollment.exam_score || 0).toFixed(1)}/65
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between text-sm border-t border-gray-200 pt-2">
-                      <span className="text-gray-700 font-medium">Total Score:</span>
-                      <span className="font-bold text-blue-600">
-                        {((enrollment.ca_score || 0) + (enrollment.exam_score || 0)).toFixed(1)}/100
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">Tasks Done:</span>
-                      <span className="font-semibold text-gray-900">
-                        {enrollment.completion_rate.toFixed(0)}%
-                      </span>
-                    </div>
-
-                    {enrollment.predicted_grade_point && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Predicted Grade:</span>
-                        <span className={`font-bold ${getGradeColor(enrollment.predicted_grade_point)}`}>
-                          {enrollment.predicted_letter_grade || 'TBD'} ({enrollment.predicted_grade_point.toFixed(2)})
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full"
-                        style={{ width: `${enrollment.completion_rate}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              {/* Add Course Card */}
-              <div
-                onClick={() => navigate('/courses')}
-                className="bg-white rounded-lg shadow-sm border-2 border-dashed border-gray-300 p-6 hover:border-blue-400 hover:bg-blue-50 transition-colors cursor-pointer"
-              >
-                <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                  <div className="text-4xl text-gray-400 mb-2">+</div>
-                  <p className="text-gray-600 font-medium">Add More Courses</p>
-                  <p className="text-sm text-gray-500 mt-1">{18 - enrolledCourses.length} available</p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
       </main>
 
       {/* Add Task Modal */}
@@ -406,8 +462,16 @@ function DashboardPage() {
         enrolledCourses={enrolledCourses}
       />
 
-      {/* Mood Logger - Floating Button */}
-      <MoodLogger onMoodLogged={() => console.log('Mood logged!')} />
+      {/* Mood Logger - Modal */}
+      {showMoodLogger && (
+        <MoodLogger
+          onMoodLogged={(mood) => {
+            setTodayMood(mood);
+            setShowMoodLogger(false);
+          }}
+          onClose={() => setShowMoodLogger(false)}
+        />
+      )}
     </div>
   )
 }

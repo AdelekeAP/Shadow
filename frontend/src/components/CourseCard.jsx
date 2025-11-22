@@ -36,30 +36,30 @@ const CourseCard = ({ course, enrolled = false, onEnroll, onUnenroll, loading = 
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+    <div className="bg-white border border-stone-200 rounded-lg p-6 hover:shadow-md transition-shadow">
       {/* Header */}
       <div className="flex justify-between items-start mb-3">
         <div>
-          <h3 className="text-lg font-bold text-gray-900">{course.code}</h3>
-          <p className="text-sm text-gray-600 mt-1">{course.title}</p>
+          <h3 className="text-lg font-bold text-stone-900">{course.code}</h3>
+          <p className="text-sm text-stone-600 mt-1">{course.title}</p>
         </div>
         {getStatusBadge()}
       </div>
 
       {/* Details */}
       <div className="space-y-2 mb-4">
-        <div className="flex items-center text-sm text-gray-600">
+        <div className="flex items-center text-sm text-stone-600">
           <span className="font-medium mr-2">Credits:</span>
-          <span className="bg-gray-100 px-2 py-0.5 rounded">{course.credits}</span>
+          <span className="bg-stone-100 px-2 py-0.5 rounded">{course.credits}</span>
         </div>
 
         {course.description && (
-          <p className="text-sm text-gray-600 leading-relaxed">
+          <p className="text-sm text-stone-600 leading-relaxed">
             {course.description}
           </p>
         )}
 
-        <div className="flex items-center text-xs text-gray-500">
+        <div className="flex items-center text-xs text-stone-500">
           <span>Level {course.level} • {course.department}</span>
         </div>
       </div>
@@ -72,7 +72,7 @@ const CourseCard = ({ course, enrolled = false, onEnroll, onUnenroll, loading = 
           w-full py-2 px-4 rounded-lg font-medium transition-colors
           ${enrolled
             ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
-            : 'bg-blue-600 text-white hover:bg-blue-700'
+            : 'bg-navy-800 text-white hover:bg-navy-900'
           }
           ${(isLoading || loading) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
         `}

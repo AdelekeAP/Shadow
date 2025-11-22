@@ -96,14 +96,14 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
 
   const getTaskTypeColor = () => {
     const colors = {
-      test: 'bg-purple-100 text-purple-800',
+      test: 'bg-navy-100 text-navy-800',
       project: 'bg-blue-100 text-blue-800',
       assignment: 'bg-green-100 text-green-800',
       exam: 'bg-red-100 text-red-800',
       participation: 'bg-yellow-100 text-yellow-800',
       quiz: 'bg-pink-100 text-pink-800',
-      presentation: 'bg-indigo-100 text-indigo-800',
-      other: 'bg-gray-100 text-gray-800'
+      presentation: 'bg-navy-100 text-navy-800',
+      other: 'bg-stone-100 text-stone-800'
     }
     return colors[task.task_type] || colors.other
   }
@@ -129,11 +129,16 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
   const isDueSoon = task.due_date && !task.is_completed && new Date(task.due_date) <= new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
 
   return (
-    <div className={`
-      bg-white border rounded-lg p-4 transition-all
-      ${task.is_completed ? 'border-gray-200 opacity-75' : 'border-gray-300 hover:shadow-md'}
-      ${isOverdue ? 'border-l-4 border-l-red-500' : ''}
-      ${task.is_urgent && !task.is_completed ? 'border-l-4 border-l-yellow-500' : ''}
+    <div
+      data-task-id={task.id}
+      className={`
+      relative bg-white rounded-xl p-4 transition-all duration-200
+      ${task.is_completed
+        ? 'bg-stone-50 border border-stone-200'
+        : 'border border-stone-200 shadow-sm hover:shadow-md hover:border-stone-300'
+      }
+      ${isOverdue ? 'border-l-4 border-l-red-500 bg-red-50/30' : ''}
+      ${task.is_urgent && !task.is_completed && !isOverdue ? 'border-l-4 border-l-amber-500 bg-amber-50/30' : ''}
     `}>
       <div className="flex items-start justify-between">
         {/* Left side - Task info */}
@@ -143,17 +148,17 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
             onClick={task.is_completed ? handleUncomplete : handleComplete}
             disabled={isLoading}
             className={`
-              mt-1 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
+              mt-0.5 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200
               ${task.is_completed
-                ? 'bg-green-500 border-green-500 hover:bg-green-600'
-                : 'border-gray-300 hover:border-blue-500'
+                ? 'bg-green-500 border-green-500 hover:bg-green-600 shadow-sm'
+                : 'border-stone-300 hover:border-navy-500 hover:bg-navy-50'
               }
               ${isLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
             `}
             title={task.is_completed ? 'Click to mark as incomplete' : 'Click to complete'}
           >
             {task.is_completed && (
-              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
               </svg>
             )}
@@ -161,13 +166,13 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
 
           {/* Task details */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center space-x-2 mb-1 flex-wrap">
-              <h4 className={`font-semibold text-gray-900 ${task.is_completed ? 'line-through' : ''}`}>
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              <h4 className={`font-semibold text-stone-900 ${task.is_completed ? 'line-through text-stone-500' : ''}`}>
                 {task.title}
               </h4>
               {task.course_code && (
                 <span
-                  className="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-800 cursor-help"
+                  className="px-2 py-0.5 text-xs font-medium rounded-full bg-navy-100 text-navy-800 cursor-help"
                   title={task.course_title || task.course_code}
                 >
                   {task.course_code}
@@ -184,13 +189,13 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
             </div>
 
             {task.description && (
-              <p className="text-sm text-gray-600 mb-2">{task.description}</p>
+              <p className="text-sm text-stone-600 mb-2">{task.description}</p>
             )}
 
-            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500">
               {/* Weight */}
               <div className="flex items-center">
-                <span className="font-medium text-gray-700">{task.weight} marks</span>
+                <span className="font-medium text-stone-700">{task.weight} marks</span>
                 {task.is_completed && task.earned_marks !== null && (
                   <>
                     <span className="ml-1 text-green-600 font-medium">
@@ -201,7 +206,7 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
                         setEarnedMarks(task.earned_marks.toString())
                         setShowEditMarks(true)
                       }}
-                      className="ml-1 text-gray-400 hover:text-blue-600 transition-colors"
+                      className="ml-1 text-stone-400 hover:text-navy-800 transition-colors"
                       title="Edit earned marks"
                     >
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -248,7 +253,7 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
                   value={earnedMarks}
                   onChange={(e) => setEarnedMarks(e.target.value)}
                   placeholder={`Marks earned (max ${task.max_marks})`}
-                  className="px-3 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="px-3 py-1 border border-stone-300 rounded text-sm focus:ring-2 focus:ring-navy-500 focus:border-navy-500"
                   autoFocus
                 />
                 <button
@@ -260,7 +265,7 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
                 </button>
                 <button
                   onClick={() => setShowMarkInput(false)}
-                  className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+                  className="px-3 py-1 bg-stone-200 text-stone-700 text-sm rounded hover:bg-stone-300"
                 >
                   Cancel
                 </button>
@@ -280,13 +285,13 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
                     value={earnedMarks}
                     onChange={(e) => setEarnedMarks(e.target.value)}
                     placeholder={`Marks earned (max ${task.max_marks})`}
-                    className="px-3 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="px-3 py-1 border border-stone-300 rounded text-sm focus:ring-2 focus:ring-navy-500 focus:border-navy-500"
                     autoFocus
                   />
                   <button
                     onClick={handleUpdateMarks}
                     disabled={isLoading}
-                    className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                    className="px-3 py-1 bg-navy-800 text-white text-sm rounded hover:bg-navy-900 disabled:opacity-50"
                   >
                     {isLoading ? 'Updating...' : 'Update'}
                   </button>
@@ -295,7 +300,7 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
                       setShowEditMarks(false)
                       setEarnedMarks('')
                     }}
-                    className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+                    className="px-3 py-1 bg-stone-200 text-stone-700 text-sm rounded hover:bg-stone-300"
                   >
                     Cancel
                   </button>
@@ -311,7 +316,7 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
           <button
             onClick={() => onEdit(task)}
             disabled={isLoading}
-            className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+            className="p-1 text-stone-400 hover:text-navy-800 transition-colors"
             title="Edit task"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -323,7 +328,7 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
           <button
             onClick={handleDelete}
             disabled={isLoading}
-            className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+            className="p-1 text-stone-400 hover:text-red-600 transition-colors"
             title="Delete task"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -344,10 +349,12 @@ const TaskList = ({ tasks, onUpdate, showCompleted = true, groupByCourse = false
   const [filter, setFilter] = useState('all') // all, pending, completed, urgent
   const [editingTask, setEditingTask] = useState(null)
 
+  const isTaskOverdue = (task) => task.due_date && !task.is_completed && new Date(task.due_date) < new Date()
+
   const filteredTasks = tasks.filter(task => {
     if (filter === 'pending') return !task.is_completed
     if (filter === 'completed') return task.is_completed
-    if (filter === 'urgent') return task.is_urgent && !task.is_completed
+    if (filter === 'urgent') return (task.is_urgent || isTaskOverdue(task)) && !task.is_completed
     return showCompleted || !task.is_completed
   })
 
@@ -386,12 +393,12 @@ const TaskList = ({ tasks, onUpdate, showCompleted = true, groupByCourse = false
 
   if (tasks.length === 0) {
     return (
-      <div className="text-center py-12 bg-gray-50 rounded-lg">
-        <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <div className="text-center py-12 bg-stone-50 rounded-lg">
+        <svg className="mx-auto h-12 w-12 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
         </svg>
-        <h3 className="mt-2 text-sm font-medium text-gray-900">No tasks</h3>
-        <p className="mt-1 text-sm text-gray-500">Get started by creating a new task</p>
+        <h3 className="mt-2 text-sm font-medium text-stone-900">No tasks</h3>
+        <p className="mt-1 text-sm text-stone-500">Get started by creating a new task</p>
       </div>
     )
   }
@@ -399,33 +406,33 @@ const TaskList = ({ tasks, onUpdate, showCompleted = true, groupByCourse = false
   return (
     <div>
       {/* Filter tabs */}
-      <div className="flex space-x-2 mb-4 border-b border-gray-200">
+      <div className="flex gap-1 mb-5 p-1 bg-stone-100 rounded-lg w-fit">
         {[
-          { key: 'all', label: 'All Tasks' },
+          { key: 'all', label: 'All' },
           { key: 'pending', label: 'Pending' },
           { key: 'urgent', label: 'Urgent' },
-          { key: 'completed', label: 'Completed' }
+          { key: 'completed', label: 'Done' }
         ].map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setFilter(key)}
             className={`
-              px-4 py-2 text-sm font-medium transition-colors border-b-2
+              px-4 py-2 text-sm font-medium rounded-md transition-all duration-200
               ${filter === key
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                ? 'bg-white text-navy-800 shadow-sm'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-50'
               }
             `}
           >
             {label}
-            {key === 'pending' && (
-              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-800">
+            {key === 'pending' && tasks.filter(t => !t.is_completed).length > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-navy-100 text-navy-700">
                 {tasks.filter(t => !t.is_completed).length}
               </span>
             )}
-            {key === 'urgent' && (
-              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-800">
-                {tasks.filter(t => t.is_urgent && !t.is_completed).length}
+            {key === 'urgent' && tasks.filter(t => (t.is_urgent || isTaskOverdue(t)) && !t.is_completed).length > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-red-100 text-red-700">
+                {tasks.filter(t => (t.is_urgent || isTaskOverdue(t)) && !t.is_completed).length}
               </span>
             )}
           </button>
@@ -435,7 +442,7 @@ const TaskList = ({ tasks, onUpdate, showCompleted = true, groupByCourse = false
       {/* Task list */}
       <div className="space-y-3">
         {sortedTasks.length === 0 ? (
-          <p className="text-center text-gray-500 py-8">No tasks match this filter</p>
+          <p className="text-center text-stone-500 py-8">No tasks match this filter</p>
         ) : (
           sortedTasks.map(task => (
             <TaskItem
@@ -451,8 +458,8 @@ const TaskList = ({ tasks, onUpdate, showCompleted = true, groupByCourse = false
 
       {/* Summary */}
       {sortedTasks.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="flex justify-between text-sm text-gray-600">
+        <div className="mt-4 pt-4 border-t border-stone-200">
+          <div className="flex justify-between text-sm text-stone-600">
             <span>
               {tasks.filter(t => t.is_completed).length} of {tasks.length} tasks completed
             </span>

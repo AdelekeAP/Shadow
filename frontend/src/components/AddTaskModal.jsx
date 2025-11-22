@@ -155,19 +155,22 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
     <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+        className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm transition-opacity"
         onClick={onClose}
       />
 
       {/* Modal */}
       <div className="flex min-h-screen items-center justify-center p-4">
-        <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="relative bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-scale-in">
           {/* Header */}
-          <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-gray-900">Add New Task</h2>
+          <div className="sticky top-0 bg-gradient-to-r from-navy-800 to-navy-900 px-6 py-5 flex items-center justify-between rounded-t-2xl">
+            <div>
+              <h2 className="text-xl font-bold text-white">Add New Task</h2>
+              <p className="text-sm text-white/70 mt-0.5">Create a new academic task</p>
+            </div>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
+              className="text-white/70 hover:text-white transition-colors p-1 hover:bg-white/10 rounded-lg"
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -179,7 +182,7 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
           <form onSubmit={handleSubmit} className="p-6 space-y-5">
             {/* Course Selection */}
             <div>
-              <label htmlFor="user_course_id" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="user_course_id" className="block text-sm font-medium text-stone-700 mb-2">
                 Course <span className="text-red-500">*</span>
               </label>
               <select
@@ -187,8 +190,8 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                 name="user_course_id"
                 value={formData.user_course_id}
                 onChange={handleChange}
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                  errors.user_course_id ? 'border-red-500' : 'border-gray-300'
+                className={`w-full px-3 py-2 border-2 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all ${
+                  errors.user_course_id ? 'border-red-500' : 'border-stone-200'
                 }`}
               >
                 <option value="">Select a course</option>
@@ -205,7 +208,7 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
 
             {/* Task Title */}
             <div>
-              <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="title" className="block text-sm font-medium text-stone-700 mb-2">
                 Task Title <span className="text-red-500">*</span>
               </label>
               <input
@@ -215,8 +218,8 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                 value={formData.title}
                 onChange={handleChange}
                 placeholder="e.g., Test 1, Project Submission, Assignment 2"
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                  errors.title ? 'border-red-500' : 'border-gray-300'
+                className={`w-full px-3 py-2 border-2 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all ${
+                  errors.title ? 'border-red-500' : 'border-stone-200'
                 }`}
               />
               {errors.title && (
@@ -226,7 +229,7 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
 
             {/* Task Type */}
             <div>
-              <label htmlFor="task_type" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="task_type" className="block text-sm font-medium text-stone-700 mb-2">
                 Task Type <span className="text-red-500">*</span>
               </label>
               <select
@@ -234,7 +237,7 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                 name="task_type"
                 value={formData.task_type}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-3 py-2 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all"
               >
                 {taskTypes.map(type => (
                   <option key={type.value} value={type.value}>
@@ -247,7 +250,7 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
             {/* Weight and Category */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label htmlFor="weight" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="weight" className="block text-sm font-medium text-stone-700 mb-2">
                   Weight (Marks) <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -260,8 +263,8 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                   max={formData.category === 'CA' ? '30' : '65'}
                   step="0.5"
                   placeholder={formData.category === 'CA' ? 'e.g., 15 (max 30)' : 'e.g., 40 (max 65)'}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                    errors.weight ? 'border-red-500' : 'border-gray-300'
+                  className={`w-full px-3 py-2 border-2 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all ${
+                    errors.weight ? 'border-red-500' : 'border-stone-200'
                   }`}
                 />
                 {errors.weight && (
@@ -270,7 +273,7 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
               </div>
 
               <div>
-                <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="category" className="block text-sm font-medium text-stone-700 mb-2">
                   Category
                 </label>
                 <select
@@ -278,12 +281,12 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                   name="category"
                   value={formData.category}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all"
                 >
                   <option value="CA">CA (Continuous Assessment)</option>
                   <option value="EXAM">EXAM (Final Examination)</option>
                 </select>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="mt-1 text-xs text-stone-500">
                   {formData.category === 'CA'
                     ? 'CA max: 30 marks (5 marks reserved for participation at lecturer discretion)'
                     : 'EXAM max: 65 marks (projects, major assessments, final exam)'}
@@ -294,7 +297,7 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
             {/* Due Date and Effort */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label htmlFor="due_date" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="due_date" className="block text-sm font-medium text-stone-700 mb-2">
                   Due Date
                 </label>
                 <input
@@ -303,12 +306,12 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                   name="due_date"
                   value={formData.due_date}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all"
                 />
               </div>
 
               <div>
-                <label htmlFor="effort_estimate" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="effort_estimate" className="block text-sm font-medium text-stone-700 mb-2">
                   Effort Estimate (minutes)
                 </label>
                 <input
@@ -320,14 +323,14 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                   min="0"
                   step="15"
                   placeholder="e.g., 120"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all"
                 />
               </div>
             </div>
 
             {/* Description */}
             <div>
-              <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="description" className="block text-sm font-medium text-stone-700 mb-2">
                 Description (Optional)
               </label>
               <textarea
@@ -337,12 +340,12 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                 onChange={handleChange}
                 rows={3}
                 placeholder="Add any additional details about this task..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                className="w-full px-3 py-2 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all resize-none"
               />
             </div>
 
             {/* Mark as Completed */}
-            <div className="border-t border-gray-200 pt-4">
+            <div className="border-t border-stone-200 pt-4">
               <div className="flex items-center mb-3">
                 <input
                   type="checkbox"
@@ -350,19 +353,19 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                   name="is_completed"
                   checked={formData.is_completed}
                   onChange={(e) => setFormData(prev => ({ ...prev, is_completed: e.target.checked }))}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  className="w-4 h-4 text-navy-800 border-stone-300 rounded focus:ring-navy-500"
                 />
-                <label htmlFor="is_completed" className="ml-2 text-sm font-medium text-gray-700">
+                <label htmlFor="is_completed" className="ml-2 text-sm font-medium text-stone-700">
                   Mark as already completed
                 </label>
               </div>
-              <p className="text-xs text-gray-500 mb-3">
+              <p className="text-xs text-stone-500 mb-3">
                 Check this if you've already finished this task and want to record your marks
               </p>
 
               {formData.is_completed && (
                 <div>
-                  <label htmlFor="earned_marks" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="earned_marks" className="block text-sm font-medium text-stone-700 mb-2">
                     Marks Earned
                   </label>
                   <input
@@ -375,8 +378,8 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
                     max={formData.weight}
                     step="0.5"
                     placeholder={`e.g., ${formData.weight ? (parseFloat(formData.weight) * 0.8).toFixed(1) : '12'} (max ${formData.weight || '0'})`}
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                      errors.earned_marks ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full px-3 py-2 border-2 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all ${
+                      errors.earned_marks ? 'border-red-500' : 'border-stone-200'
                     }`}
                   />
                   {errors.earned_marks && (
@@ -394,19 +397,19 @@ const AddTaskModal = ({ isOpen, onClose, onTaskCreated, enrolledCourses }) => {
             )}
 
             {/* Action Buttons */}
-            <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+            <div className="flex justify-end gap-3 pt-4 border-t border-stone-200 bg-stone-50 -mx-6 -mb-5 px-6 py-4 mt-5 rounded-b-2xl">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={isSubmitting}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className="px-5 py-2.5 border-2 border-stone-300 rounded-xl text-stone-700 font-medium hover:bg-stone-100 transition-all disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center"
+                className="px-5 py-2.5 bg-navy-800 text-white rounded-xl font-medium hover:bg-navy-900 hover:shadow-lg transition-all disabled:opacity-50 flex items-center"
               >
                 {isSubmitting ? (
                   <>
