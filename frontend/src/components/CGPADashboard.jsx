@@ -43,7 +43,7 @@ export default function CGPADashboard() {
 
   const getGPAColor = (gpa) => {
     if (gpa >= 4.5) return 'text-green-600';
-    if (gpa >= 3.5) return 'text-blue-600';
+    if (gpa >= 3.5) return 'text-navy-800';
     if (gpa >= 2.5) return 'text-yellow-600';
     return 'text-red-600';
   };
@@ -58,7 +58,7 @@ export default function CGPADashboard() {
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-navy-800"></div>
       </div>
     );
   }
@@ -73,7 +73,7 @@ export default function CGPADashboard() {
 
   if (!cgpaData) {
     return (
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-gray-700">
+      <div className="bg-stone-50 border border-stone-200 rounded-lg p-4 text-stone-700">
         No CGPA data available yet. Start adding courses and grades!
       </div>
     );
@@ -86,19 +86,19 @@ export default function CGPADashboard() {
         <div className="flex items-center space-x-4">
           <button
             onClick={() => navigate('/dashboard')}
-            className="flex items-center text-gray-600 hover:text-gray-900 font-medium transition"
+            className="flex items-center text-stone-600 hover:text-stone-900 font-medium transition"
           >
             <span className="mr-2">←</span> Back to Dashboard
           </button>
-          <h2 className="text-2xl font-bold text-gray-900">CGPA Dashboard</h2>
+          <h2 className="text-2xl font-bold text-stone-900">CGPA Dashboard</h2>
         </div>
         <div className="flex space-x-2">
           <button
             onClick={() => setActiveTab('overview')}
             className={`px-4 py-2 rounded-lg font-medium transition ${
               activeTab === 'overview'
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ? 'bg-navy-800 text-white'
+                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
             }`}
           >
             Overview
@@ -107,8 +107,8 @@ export default function CGPADashboard() {
             onClick={() => setActiveTab('analytics')}
             className={`px-4 py-2 rounded-lg font-medium transition ${
               activeTab === 'analytics'
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ? 'bg-navy-800 text-white'
+                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
             }`}
           >
             Analytics
@@ -117,8 +117,8 @@ export default function CGPADashboard() {
             onClick={() => setActiveTab('breakdown')}
             className={`px-4 py-2 rounded-lg font-medium transition ${
               activeTab === 'breakdown'
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ? 'bg-navy-800 text-white'
+                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
             }`}
           >
             Breakdown
@@ -133,18 +133,18 @@ export default function CGPADashboard() {
           <div className={`${getGPABgColor(cgpaData.current.cgpa)} rounded-xl p-8 border-2 border-opacity-50`}>
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-gray-600 font-medium mb-2">Current CGPA</p>
+                <p className="text-stone-600 font-medium mb-2">Current CGPA</p>
                 <p className={`text-6xl font-bold ${getGPAColor(cgpaData.current.cgpa)}`}>
                   {formatNumber(cgpaData.current.cgpa, 2)}
                 </p>
-                <p className="text-gray-600 mt-2">
+                <p className="text-stone-600 mt-2">
                   {cgpaData.current.total_credits} credits completed
                 </p>
               </div>
               <div className="text-right">
                 <div className="bg-white rounded-lg p-4 shadow-sm">
-                  <p className="text-sm text-gray-600">Classification</p>
-                  <p className="text-lg font-bold text-gray-900">
+                  <p className="text-sm text-stone-600">Classification</p>
+                  <p className="text-lg font-bold text-stone-900">
                     {cgpaData.current.cgpa >= 4.5 ? 'First Class' :
                      cgpaData.current.cgpa >= 3.5 ? 'Second Class Upper' :
                      cgpaData.current.cgpa >= 2.5 ? 'Second Class Lower' :
@@ -158,45 +158,45 @@ export default function CGPADashboard() {
           {/* Quick Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Predicted CGPA */}
-            <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
+            <div className="bg-white rounded-lg shadow p-6 border border-stone-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-600 text-sm font-medium">Predicted Final CGPA</p>
+                  <p className="text-stone-600 text-sm font-medium">Predicted Final CGPA</p>
                   <p className={`text-3xl font-bold mt-2 ${getGPAColor(cgpaData.predictions.predicted_cgpa)}`}>
                     {formatNumber(cgpaData.predictions.predicted_cgpa, 2)}
                   </p>
                 </div>
                 <div className="text-2xl">🎯</div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
+              <p className="text-xs text-stone-500 mt-2">
                 Based on current performance trends
               </p>
             </div>
 
             {/* Total Courses */}
-            <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
+            <div className="bg-white rounded-lg shadow p-6 border border-stone-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-600 text-sm font-medium">Total Courses</p>
-                  <p className="text-3xl font-bold mt-2 text-gray-900">
+                  <p className="text-stone-600 text-sm font-medium">Total Courses</p>
+                  <p className="text-3xl font-bold mt-2 text-stone-900">
                     {cgpaData.total_courses}
                   </p>
                 </div>
                 <div className="text-2xl">📚</div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
+              <p className="text-xs text-stone-500 mt-2">
                 {cgpaData.semesters.length} semesters completed
               </p>
             </div>
 
             {/* Target Analysis */}
-            <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
+            <div className="bg-white rounded-lg shadow p-6 border border-stone-200">
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  <p className="text-gray-600 text-xs font-medium mb-1">
+                  <p className="text-stone-600 text-xs font-medium mb-1">
                     To reach Target CGPA: {formatNumber(cgpaData.target_analysis.target_cgpa, 2)}
                   </p>
-                  <p className="text-gray-700 text-sm font-semibold mb-2">
+                  <p className="text-stone-700 text-sm font-semibold mb-2">
                     Required Semester GPA:
                   </p>
                   <p className={`text-3xl font-bold ${
@@ -228,7 +228,7 @@ export default function CGPADashboard() {
 
           {/* Semester Trend Chart */}
           {analytics && analytics.semester_gpa_history && analytics.semester_gpa_history.length > 1 && (
-            <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
+            <div className="bg-white rounded-lg shadow p-6 border border-stone-200">
               <h3 className="text-lg font-semibold mb-4">Semester Performance Trend</h3>
               <div className="h-64">
                 <VictoryChart
@@ -265,7 +265,7 @@ export default function CGPADashboard() {
                 <div className={`px-4 py-2 rounded-full ${
                   analytics.trend === 'Improving' ? 'bg-green-100 text-green-700' :
                   analytics.trend === 'Declining' ? 'bg-red-100 text-red-700' :
-                  'bg-gray-100 text-gray-700'
+                  'bg-stone-100 text-stone-700'
                 }`}>
                   Trend: {analytics.trend}
                 </div>
@@ -288,7 +288,7 @@ export default function CGPADashboard() {
             </div>
             <div className="bg-blue-50 rounded-lg p-6 border-2 border-blue-200">
               <p className="text-blue-700 text-sm font-medium">Average Semester GPA</p>
-              <p className="text-4xl font-bold text-blue-600 mt-2">
+              <p className="text-4xl font-bold text-navy-800 mt-2">
                 {formatNumber(analytics.average_semester_gpa, 2)}
               </p>
             </div>
@@ -302,7 +302,7 @@ export default function CGPADashboard() {
 
           {/* Grade Distribution */}
           {analytics.grade_distribution && Object.keys(analytics.grade_distribution).length > 0 && (
-            <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
+            <div className="bg-white rounded-lg shadow p-6 border border-stone-200">
               <h3 className="text-lg font-semibold mb-4">Grade Distribution</h3>
               <div className="flex flex-col md:flex-row items-center justify-around">
                 <div className="w-full md:w-1/2">
@@ -320,9 +320,9 @@ export default function CGPADashboard() {
                   {Object.entries(analytics.grade_distribution)
                     .sort(([, a], [, b]) => b - a)
                     .map(([grade, count]) => (
-                      <div key={grade} className="flex justify-between items-center p-3 bg-gray-50 rounded">
+                      <div key={grade} className="flex justify-between items-center p-3 bg-stone-50 rounded">
                         <span className="font-medium">{grade}</span>
-                        <span className="text-gray-600">{count} course{count !== 1 ? 's' : ''}</span>
+                        <span className="text-stone-600">{count} course{count !== 1 ? 's' : ''}</span>
                       </div>
                     ))}
                 </div>
@@ -337,8 +337,8 @@ export default function CGPADashboard() {
         <div className="space-y-4">
           <h3 className="text-lg font-semibold">Semester-by-Semester Breakdown</h3>
           {cgpaData.semesters.map((semester, index) => (
-            <div key={index} className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
-              <div className="bg-gradient-to-r from-purple-600 to-purple-700 p-4 text-white">
+            <div key={index} className="bg-white rounded-lg shadow border border-stone-200 overflow-hidden">
+              <div className="bg-gradient-to-r from-navy-800 to-navy-700 p-4 text-white">
                 <div className="flex justify-between items-center">
                   <h4 className="text-lg font-bold">{semester.name}</h4>
                   <div className="text-right">
@@ -371,11 +371,11 @@ export default function CGPADashboard() {
                   </thead>
                   <tbody>
                     {semester.courses && semester.courses.map((course, idx) => (
-                      <tr key={idx} className="border-b hover:bg-gray-50">
+                      <tr key={idx} className="border-b hover:bg-stone-50">
                         <td className="py-3">
                           <div>
                             <p className="font-medium text-sm">{course.code}</p>
-                            <p className="text-xs text-gray-600">{course.name}</p>
+                            <p className="text-xs text-stone-600">{course.name}</p>
                           </div>
                         </td>
                         <td className="text-center text-sm">{course.credits}</td>
@@ -390,7 +390,7 @@ export default function CGPADashboard() {
                             course.grade === 'B' ? 'bg-blue-100 text-blue-700' :
                             course.grade === 'C' ? 'bg-yellow-100 text-yellow-700' :
                             course.grade === 'D' ? 'bg-orange-100 text-orange-700' :
-                            'bg-gray-100 text-gray-700'
+                            'bg-stone-100 text-stone-700'
                           }`}>
                             {course.grade}
                           </span>
@@ -404,7 +404,7 @@ export default function CGPADashboard() {
                     ))}
                   </tbody>
                 </table>
-                <div className="mt-4 flex justify-between items-center bg-gray-50 p-3 rounded">
+                <div className="mt-4 flex justify-between items-center bg-stone-50 p-3 rounded">
                   <span className="font-semibold">Total Credits:</span>
                   <span className="font-bold">
                     {semester.courses ? semester.courses.reduce((sum, c) => sum + c.credits, 0) : 0}

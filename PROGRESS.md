@@ -698,6 +698,100 @@ frontend/src/
   - 10+ supporting libraries
 - ✨ **Impact**: MVP now includes AI/ML component as specified!
 
+### November 22, 2025 - **MAJOR UI/UX OVERHAUL** 🎨
+- ✅ **Phase 1: Color Migration (COMPLETED)**
+  - Migrated entire codebase from indigo/purple/blue/gray to navy/stone color scheme
+  - Updated `tailwind.config.js` with custom navy scale (50-900)
+  - Updated 13+ components and pages with new color system
+  - Grade-based colors: Emerald (A), Blue (B), Amber (C), Orange (D), Red (E/F)
+
+- ✅ **Phase 2: Auto-Scrolling Course Carousel (COMPLETED)**
+  - Built premium infinite auto-scrolling carousel (`CourseCarousel.jsx`)
+  - Displays enrolled courses with grade-based gradient backgrounds
+  - SVG circular progress rings for task completion
+  - Smooth 60fps scrolling using `requestAnimationFrame`
+  - Pauses on card hover with debounce (prevents shaking)
+  - Manual scrolling enabled when paused
+  - Dark navy background with glow effects
+
+- ✅ **Phase 3: Task List Visual Polish (COMPLETED)**
+  - Redesigned task cards with `rounded-xl` corners
+  - Circular checkboxes with smooth transitions
+  - Color-coded left borders for overdue (red) and urgent (amber) tasks
+  - Pill-style segmented filter tabs (replaced underline tabs)
+  - Better hover states and shadows
+  - `transition-all duration-200` throughout
+
+- ✅ **Phase 4: Dashboard Layout & Spacing (COMPLETED)**
+  - **CGPA Overview**: Dark navy gradient card with white text, emerald accents
+  - **Stat Cards**: Horizontal layout with color-coded icons (Books, Badge, Chart)
+  - **4-column grid**: Added mood widget as 4th stat card
+  - Removed redundant bottom course grid
+  - Better visual hierarchy and spacing (`mb-8` consistency)
+
+- ✅ **Phase 5: Forms & Modals Styling (COMPLETED)**
+  - **AddTaskModal & EditTaskModal**: Navy gradient headers, `rounded-2xl`
+  - **MoodLogger**: Modal-based (removed floating button)
+  - Backdrop blur effects (`backdrop-blur-sm`)
+  - Scale-in animations on open
+  - Stone-50 footer backgrounds
+
+- ✅ **Phase 6: Micro-interactions & Animations (COMPLETED)**
+  - Added CSS animation utilities: `animate-fade-in`, `animate-slide-up`, `animate-scale-in`
+  - Applied to modals (scale-in), mobile menu (fade-in)
+  - Smooth transitions throughout
+
+- ✅ **Navigation Enhancement (COMPLETED)**
+  - Responsive burger menu for mobile
+  - Sticky nav bar (`sticky top-0 z-40`)
+  - Clean desktop layout with dividers
+  - Hamburger/X toggle animation
+
+- ✅ **BALANCED ENHANCEMENT 1: Mood Insights Widget (COMPLETED)** 💭
+  - Integrated into 4-column stats grid (4th position)
+  - **Copy**: "How's your day?" - more personal
+  - **Large mood emoji**: 🎯, 💪, 😰, 😌, etc. (4xl size)
+  - **Visual energy**: ⚡⚡⚡○○ instead of text
+  - **Unlogged state**: Pulse animation + bouncing star icon
+  - **Logged state**: "✓ Logged" badge, emoji display
+  - **Dynamic button**: "Log Mood" vs "Update Mood"
+  - **Controlled modal**: No floating button, opens from widget
+
+- ✅ **BALANCED ENHANCEMENT 2: Compact AI Recommendations (COMPLETED)** 🎯
+  - Created `PriorityRecommendationsCompact.jsx` component
+  - **~60% vertical space reduction** (from ~400-500px to ~120-150px per card)
+  - **Horizontal card layout**: Badge + inline content + priority bar + CTA
+  - **Removed**: Tab navigation, decorative circles, excessive padding
+  - **Top 3 only**: `limit=3` in API call for focus
+  - **Functionality**: Click handlers scroll to task + 2s highlight effect
+  - **Better proportions**: AI section now 25% of screen (down from 40%)
+  - Uses `data-task-id` attribute for targeting
+
+- 📁 **New Files Created**
+  - `src/components/CourseCarousel.jsx` (221 lines)
+  - `src/components/CourseCarousel.backup.jsx` (backup)
+  - `src/components/PriorityRecommendationsCompact.jsx` (192 lines)
+
+- 🔧 **Backend Changes**
+  - `backend/app/main.py`: Added CORS for port 3002
+
+- 📊 **Final Dashboard Layout**
+  ```
+  CGPA Overview:      15% of screen
+  Course Carousel:    20% of screen
+  Stats + Mood:       10% of screen
+  AI Recommendations: 25% of screen (reduced from 40%)
+  Task List:          30% of screen
+  ```
+
+- ✨ **Impact**:
+  - More engaging mood logging (pulse + animations)
+  - Better-balanced dashboard (AI section not dominating)
+  - Professional, polished UI throughout
+  - Actionable recommendations (scroll-to-task)
+  - ~2,500 lines of code updated
+  - 15 components updated, 3 new components
+
 ---
 
 ## 🎉 **ACHIEVEMENTS**

@@ -80,9 +80,9 @@ export default function PriorityRecommendations() {
 
   const getPriorityColor = (score) => {
     if (score >= 8) return 'text-red-600 bg-red-50';
-    if (score >= 6) return 'text-orange-600 bg-orange-50';
+    if (score >= 6) return 'text-amber-600 bg-amber-50';
     if (score >= 4) return 'text-yellow-600 bg-yellow-50';
-    return 'text-blue-600 bg-blue-50';
+    return 'text-navy-800 bg-navy-50';
   };
 
   const getPriorityBadge = (score) => {
@@ -116,9 +116,9 @@ export default function PriorityRecommendations() {
     return (
       <div className="bg-white rounded-xl shadow-lg p-8">
         <div className="flex flex-col items-center justify-center h-64">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-          <div className="text-gray-600 font-medium">Analyzing your tasks...</div>
-          <div className="text-gray-400 text-sm mt-1">Calculating priorities</div>
+          <div className="w-16 h-16 border-4 border-navy-800 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <div className="text-stone-600 font-medium">Analyzing your tasks...</div>
+          <div className="text-stone-400 text-sm mt-1">Calculating priorities</div>
         </div>
       </div>
     );
@@ -132,7 +132,7 @@ export default function PriorityRecommendations() {
           <div className="text-red-600 font-semibold text-lg">{error}</div>
           <button
             onClick={fetchRecommendations}
-            className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            className="mt-4 px-6 py-2 bg-navy-800 text-white rounded-lg hover:bg-navy-900 transition"
           >
             Try Again
           </button>
@@ -144,59 +144,53 @@ export default function PriorityRecommendations() {
   if (recommendations.length === 0) {
     return (
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div className="p-6 bg-gradient-to-r from-blue-50 to-purple-50">
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+        <div className="p-6 bg-stone-50">
+          <h2 className="text-2xl font-bold text-stone-900 flex items-center gap-2">
             <span className="text-3xl">🎯</span>
             What to Focus On Next
           </h2>
         </div>
-        <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+        <div className="flex flex-col items-center justify-center h-64 text-stone-500">
           <div className="text-6xl mb-4">🎉</div>
-          <p className="text-xl font-bold text-gray-700">All caught up!</p>
-          <p className="text-sm mt-2 text-gray-500">No pending tasks at the moment</p>
-          <p className="text-xs mt-4 text-gray-400">Great work staying on top of your coursework!</p>
+          <p className="text-xl font-bold text-stone-700">All caught up!</p>
+          <p className="text-sm mt-2 text-stone-500">No pending tasks at the moment</p>
+          <p className="text-xs mt-4 text-stone-400">Great work staying on top of your coursework!</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-gray-100">
+    <div className="bg-white rounded-xl shadow-sm border border-stone-200 overflow-hidden">
       {/* Header */}
-      <div className="p-8 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 relative overflow-hidden">
-        {/* Decorative circles */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full -mr-32 -mt-32"></div>
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-white opacity-10 rounded-full -ml-24 -mb-24"></div>
-
-        <div className="relative z-10">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-14 h-14 bg-white rounded-2xl shadow-lg flex items-center justify-center text-3xl transform rotate-3 hover:rotate-6 transition-transform">
+      <div className="p-6 bg-gradient-to-r from-navy-800 to-navy-900 relative overflow-hidden">
+        <div className="relative z-10 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-2xl">
               🎯
             </div>
-            <h2 className="text-3xl font-extrabold text-white tracking-tight">
-              What to Focus On Next
-            </h2>
+            <div>
+              <h2 className="text-xl font-bold text-white">What to Focus On Next</h2>
+              <p className="text-white/70 text-xs">AI-powered • Top {Math.min(recommendations.length, 3)} priorities</p>
+            </div>
           </div>
-          <p className="text-white text-opacity-90 text-sm font-medium ml-1">
-            AI-powered recommendations • {recommendations.length} tasks ranked by priority
-          </p>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 px-6 bg-gray-50">
+      {/* Compact Recommendations List */}
+      <div className="p-6 space-y-3">
         <button
           onClick={() => setActiveTab('all')}
           className={`py-4 px-6 font-semibold text-sm border-b-3 transition-all ${
             activeTab === 'all'
-              ? 'border-blue-600 text-blue-700 bg-white -mb-px'
-              : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              ? 'border-navy-800 text-navy-800 bg-white -mb-px'
+              : 'border-transparent text-stone-600 hover:text-stone-900 hover:bg-stone-100'
           }`}
         >
           <div className="flex items-center gap-2">
             <span>All Tasks</span>
             <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-              activeTab === 'all' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'
+              activeTab === 'all' ? 'bg-navy-100 text-navy-700' : 'bg-stone-200 text-stone-600'
             }`}>
               {recommendations.length}
             </span>
@@ -207,14 +201,14 @@ export default function PriorityRecommendations() {
           className={`py-4 px-6 font-semibold text-sm border-b-3 transition-all ${
             activeTab === 'urgent'
               ? 'border-red-600 text-red-700 bg-white -mb-px'
-              : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              : 'border-transparent text-stone-600 hover:text-stone-900 hover:bg-stone-100'
           }`}
         >
           <div className="flex items-center gap-2">
             <span>🔴</span>
             <span>Urgent</span>
             <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-              activeTab === 'urgent' ? 'bg-red-100 text-red-700' : 'bg-gray-200 text-gray-600'
+              activeTab === 'urgent' ? 'bg-red-100 text-red-700' : 'bg-stone-200 text-stone-600'
             }`}>
               {recommendations.filter(r => r.recommendation_type === 'urgent').length}
             </span>
@@ -225,14 +219,14 @@ export default function PriorityRecommendations() {
           className={`py-4 px-6 font-semibold text-sm border-b-3 transition-all ${
             activeTab === 'goal_driven'
               ? 'border-green-600 text-green-700 bg-white -mb-px'
-              : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              : 'border-transparent text-stone-600 hover:text-stone-900 hover:bg-stone-100'
           }`}
         >
           <div className="flex items-center gap-2">
             <span>🎯</span>
             <span>Goal Impact</span>
             <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-              activeTab === 'goal_driven' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
+              activeTab === 'goal_driven' ? 'bg-green-100 text-green-700' : 'bg-stone-200 text-stone-600'
             }`}>
               {recommendations.filter(r => r.recommendation_type === 'goal_driven').length}
             </span>
@@ -242,15 +236,15 @@ export default function PriorityRecommendations() {
           onClick={() => setActiveTab('recovery')}
           className={`py-4 px-6 font-semibold text-sm border-b-3 transition-all ${
             activeTab === 'recovery'
-              ? 'border-orange-600 text-orange-700 bg-white -mb-px'
-              : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              ? 'border-amber-600 text-amber-700 bg-white -mb-px'
+              : 'border-transparent text-stone-600 hover:text-stone-900 hover:bg-stone-100'
           }`}
         >
           <div className="flex items-center gap-2">
             <span>⚠️</span>
             <span>Recovery</span>
             <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-              activeTab === 'recovery' ? 'bg-orange-100 text-orange-700' : 'bg-gray-200 text-gray-600'
+              activeTab === 'recovery' ? 'bg-amber-100 text-amber-700' : 'bg-stone-200 text-stone-600'
             }`}>
               {recommendations.filter(r => r.recommendation_type === 'recovery').length}
             </span>
@@ -259,16 +253,16 @@ export default function PriorityRecommendations() {
       </div>
 
       {/* Recommendations List */}
-      <div className="p-8 space-y-6 bg-gradient-to-b from-gray-50 to-gray-100">
+      <div className="p-8 space-y-6 bg-gradient-to-b from-stone-50 to-stone-100">
         {filteredRecommendations.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-lg border-2 border-dashed border-gray-300">
+          <div className="text-center py-16 bg-white rounded-lg border-2 border-dashed border-stone-300">
             <div className="text-5xl mb-3">
               {activeTab === 'urgent' ? '✅' : activeTab === 'goal_driven' ? '🎯' : activeTab === 'recovery' ? '💪' : '📝'}
             </div>
-            <p className="text-gray-700 font-semibold text-lg">
+            <p className="text-stone-700 font-semibold text-lg">
               No {activeTab !== 'all' ? getRecommendationLabel(activeTab) : ''} tasks right now
             </p>
-            <p className="text-gray-500 text-sm mt-2">
+            <p className="text-stone-500 text-sm mt-2">
               {activeTab === 'urgent' && "You're all caught up with urgent deadlines!"}
               {activeTab === 'goal_driven' && "No high-impact tasks at the moment"}
               {activeTab === 'recovery' && "You're on track with your goals!"}
@@ -285,7 +279,7 @@ export default function PriorityRecommendations() {
                   ? 'border-red-300 bg-gradient-to-br from-red-50 via-orange-50 to-white'
                   : rec.priority_score >= 6
                   ? 'border-orange-300 bg-gradient-to-br from-orange-50 via-yellow-50 to-white'
-                  : 'border-blue-200 bg-gradient-to-br from-blue-50 via-indigo-50 to-white'
+                  : 'border-navy-200 bg-gradient-to-br from-navy-50 via-stone-50 to-white'
               }`}
             >
               {/* Priority stripe on the left */}
@@ -296,7 +290,7 @@ export default function PriorityRecommendations() {
                   ? 'bg-gradient-to-b from-red-500 to-orange-500'
                   : rec.priority_score >= 6
                   ? 'bg-gradient-to-b from-orange-500 to-yellow-500'
-                  : 'bg-gradient-to-b from-blue-500 to-indigo-500'
+                  : 'bg-gradient-to-b from-navy-700 to-navy-800'
               }`}></div>
 
               <div className="p-6 pl-8">
@@ -309,7 +303,7 @@ export default function PriorityRecommendations() {
                     ? 'bg-gradient-to-br from-gray-300 via-gray-400 to-gray-500 text-white border-4 border-gray-200'
                     : index === 2
                     ? 'bg-gradient-to-br from-orange-400 via-orange-500 to-orange-600 text-white border-4 border-orange-200'
-                    : 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-2 border-indigo-300'
+                    : 'bg-gradient-to-br from-navy-700 to-navy-800 text-white border-2 border-navy-300'
                 }`}>
                   <span className="drop-shadow-lg">{index + 1}</span>
                 </div>
@@ -329,10 +323,10 @@ export default function PriorityRecommendations() {
 
                   {/* Course and Task Type */}
                   <div className="flex items-center gap-3 mb-4">
-                    <span className="px-4 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-sm font-black rounded-full shadow-md">
+                    <span className="px-4 py-1.5 bg-navy-800 text-white text-sm font-black rounded-full shadow-md">
                       {rec.course_code}
                     </span>
-                    <span className="text-sm text-gray-700 font-semibold bg-gray-100 px-3 py-1 rounded-full">
+                    <span className="text-sm text-stone-700 font-semibold bg-stone-100 px-3 py-1 rounded-full">
                       {rec.task_type} • {rec.weight} marks
                     </span>
                   </div>
@@ -353,11 +347,11 @@ export default function PriorityRecommendations() {
 
                   {/* Visual Priority Bar */}
                   <div className="mb-4 bg-white p-4 rounded-xl shadow-sm">
-                    <div className="flex items-center justify-between text-xs font-bold text-gray-700 mb-2">
+                    <div className="flex items-center justify-between text-xs font-bold text-stone-700 mb-2">
                       <span>Priority Level</span>
                       <span className="text-base">{Math.round((rec.priority_score / 10) * 100)}%</span>
                     </div>
-                    <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden shadow-inner">
+                    <div className="w-full bg-stone-200 rounded-full h-4 overflow-hidden shadow-inner">
                       <div
                         className={`h-4 rounded-full transition-all duration-700 shadow-lg ${
                           rec.priority_score >= 8
@@ -377,7 +371,7 @@ export default function PriorityRecommendations() {
                   <div className={`text-sm font-bold flex items-center gap-2 px-4 py-2 rounded-lg ${
                     rec.is_overdue
                       ? 'bg-red-100 text-red-700 border border-red-300'
-                      : 'bg-gray-100 text-gray-800 border border-gray-300'
+                      : 'bg-stone-100 text-stone-800 border border-stone-300'
                   }`}>
                     <span className="text-lg">📅</span>
                     {formatDueDate(rec.due_date)}
