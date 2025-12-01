@@ -25,6 +25,7 @@ class Task(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     task_type = Column(String(50), nullable=False)  # 'test', 'project', 'participation', 'exam', 'assignment'
+    topic = Column(String(255), nullable=True)  # Topic for SmartStudy targeting (e.g., "Binary Trees", "Recursion")
 
     # PAU-specific grading (35/65 split)
     weight = Column(Numeric(5, 2), nullable=False)  # Marks (e.g., 15 for Test 1)
@@ -64,6 +65,7 @@ class Task(Base):
             "title": self.title,
             "description": self.description,
             "task_type": self.task_type,
+            "topic": self.topic,
             "weight": float(self.weight) if self.weight else 0.0,
             "max_marks": float(self.max_marks) if self.max_marks else float(self.weight) if self.weight else 0.0,
             "earned_marks": float(self.earned_marks) if self.earned_marks else None,

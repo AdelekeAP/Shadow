@@ -13,6 +13,7 @@ class UserCreate(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=255)
     university_id: Optional[str] = Field(None, max_length=50)
     entry_level: Optional[str] = Field("400L", max_length=10)
+    current_cgpa: Optional[float] = Field(None, ge=0.0, le=5.0)
     target_cgpa: Optional[float] = Field(None, ge=0.0, le=5.0)
 
     @validator('entry_level')

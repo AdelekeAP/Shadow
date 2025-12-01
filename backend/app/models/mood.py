@@ -1,8 +1,8 @@
 """
 Mood Log Model - Track student mood and energy levels
 """
-from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, Text, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 import uuid
 from app.database import Base
@@ -26,8 +26,11 @@ class MoodLog(Base):
     course_id = Column(UUID(as_uuid=True), ForeignKey('courses.id', ondelete='SET NULL'), nullable=True)
     task_id = Column(UUID(as_uuid=True), ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True)
 
-    # Sentiment analysis (to be implemented later)
-    sentiment_score = Column(Integer, nullable=True)  # -1 (negative), 0 (neutral), 1 (positive)
+    # Enhanced emotion detection (7-emotion model)
+    sentiment_score = Column(Integer, nullable=True)  # -1 (negative), 0 (neutral), 1 (positive) - legacy
+    primary_emotion = Column(String(50), nullable=True)  # 'joy', 'sadness', 'anxiety', 'fear', 'anger', 'disgust', 'surprise'
+    emotion_confidence = Column(Numeric(3, 3), nullable=True)  # 0.000-1.000
+    emotion_scores = Column(JSONB, nullable=True)  # All 7 emotion scores {"joy": 0.892, "anxiety": 0.045, ...}
 
     logged_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
@@ -45,5 +48,8 @@ class MoodLog(Base):
             "course_id": str(self.course_id) if self.course_id else None,
             "task_id": str(self.task_id) if self.task_id else None,
             "sentiment_score": self.sentiment_score,
+            "primary_emotion": self.primary_emotion,
+            "emotion_confidence": float(self.emotion_confidence) if self.emotion_confidence else None,
+            "emotion_scores": self.emotion_scores,
             "logged_at": self.logged_at.isoformat() if self.logged_at else None
         }
