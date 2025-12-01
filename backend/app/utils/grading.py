@@ -85,21 +85,23 @@ def predict_exam_score(ca_score: float, course_difficulty: float = 1.0) -> float
 def calculate_predicted_grade(
     ca_score: float,
     exam_score: Optional[float] = None,
-    course_difficulty: float = 1.0
+    course_difficulty: float = 1.0,
+    participation_score: Optional[float] = None
 ) -> Tuple[float, float, str, float]:
     """
     Calculate current and predicted grades for a course
 
     Args:
-        ca_score: Current CA score (out of 35)
+        ca_score: Current CA score (out of 35, includes participation if known)
         exam_score: Actual exam score if taken (out of 65), None if not taken
         course_difficulty: Course difficulty multiplier (default 1.0)
+        participation_score: Actual participation score if known (out of 5), None if unknown
 
     Returns:
         Tuple of (current_score, predicted_score, predicted_letter_grade, predicted_grade_point)
 
     Examples:
-        >>> calculate_predicted_grade(30, None)  # CA only
+        >>> calculate_predicted_grade(30, None)  # CA only (assumes 3/5 participation)
         (30.0, 78.64, 'A', 5.0)
 
         >>> calculate_predicted_grade(30, 50)  # CA + actual exam
@@ -110,10 +112,18 @@ def calculate_predicted_grade(
         current_score = ca_score + exam_score
         predicted_score = current_score  # No prediction needed
     else:
-        # Predict exam score
+        # Predict exam score based on CA
         current_score = ca_score  # Only CA so far
-        predicted_exam = predict_exam_score(ca_score, course_difficulty)
-        predicted_score = ca_score + predicted_exam
+
+        # For prediction: assume average participation of 3/5 if not provided
+        # This is fairer since students don't know their participation score until results
+        ca_for_prediction = ca_score
+        if participation_score is None:
+            # Assume student will get 3/5 for participation (60% - average)
+            ca_for_prediction = ca_score + 3.0
+
+        predicted_exam = predict_exam_score(ca_for_prediction, course_difficulty)
+        predicted_score = ca_for_prediction + predicted_exam
 
     # Convert predicted score to grade
     predicted_letter, predicted_gp = convert_to_grade_point(predicted_score)

@@ -10,6 +10,7 @@ function RegisterPage() {
     confirmPassword: '',
     universityId: '',
     entryLevel: '400L',
+    currentCgpa: '',
     targetCgpa: '4.50'
   })
   const [error, setError] = useState('')
@@ -49,6 +50,7 @@ function RegisterPage() {
         password: formData.password,
         university_id: formData.universityId || null,
         entry_level: formData.entryLevel,
+        current_cgpa: formData.currentCgpa ? parseFloat(formData.currentCgpa) : null,
         target_cgpa: parseFloat(formData.targetCgpa)
       }
 
@@ -155,6 +157,25 @@ function RegisterPage() {
               <option value="300L">300 Level</option>
               <option value="400L">400 Level</option>
             </select>
+          </div>
+
+          <div>
+            <label htmlFor="currentCgpa" className="block text-sm font-medium text-stone-700 mb-1">
+              Current CGPA (Optional)
+            </label>
+            <input
+              id="currentCgpa"
+              name="currentCgpa"
+              type="number"
+              step="0.01"
+              min="0"
+              max="5"
+              value={formData.currentCgpa}
+              onChange={handleChange}
+              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
+              placeholder="0.00"
+            />
+            <p className="text-xs text-stone-500 mt-1">Leave blank if you're a new student</p>
           </div>
 
           <div>

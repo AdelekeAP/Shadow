@@ -5,7 +5,7 @@
 import axios from 'axios'
 
 // API base URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 // Create axios instance
 const api = axios.create({
@@ -352,6 +352,111 @@ export const deleteTask = async (taskId) => {
 export const getCurrentCGPA = async () => {
   const response = await api.get('/api/v1/gpa/current')
   return response.data
+}
+
+// ============================================
+// SmartStudy API
+// ============================================
+
+/**
+ * Send a message to SmartStudy AI
+ * @param {string} content - Message content
+ * @param {string|null} conversationId - Optional conversation ID to continue existing chat
+ * @returns {Promise} Response with AI message
+ */
+export const sendSmartStudyMessage = async (content, conversationId = null) => {
+  try {
+    const response = await api.post('/api/v1/smartstudy/chat', {
+      content,
+      conversation_id: conversationId
+    })
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+/**
+ * Get all chat conversations for current user
+ * @param {number} limit - Number of conversations to return
+ * @returns {Promise} List of conversations
+ */
+export const getSmartStudyConversations = async (limit = 20) => {
+  try {
+    const response = await api.get('/api/v1/smartstudy/conversations', {
+      params: { limit }
+    })
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+/**
+ * Get a specific conversation with all messages
+ * @param {string} conversationId - Conversation UUID
+ * @returns {Promise} Conversation with messages
+ */
+export const getSmartStudyConversation = async (conversationId) => {
+  try {
+    const response = await api.get(`/api/v1/smartstudy/conversations/${conversationId}`)
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+/**
+ * Delete a conversation
+ * @param {string} conversationId - Conversation UUID
+ * @returns {Promise} Success response
+ */
+export const deleteSmartStudyConversation = async (conversationId) => {
+  try {
+    const response = await api.delete(`/api/v1/smartstudy/conversations/${conversationId}`)
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+/**
+ * Get suggested chat prompts based on student's current state
+ * @returns {Promise} List of suggested prompts
+ */
+export const getSmartStudySuggestedPrompts = async () => {
+  try {
+    const response = await api.get('/api/v1/smartstudy/suggested-prompts')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+/**
+ * Check if SmartStudy should be triggered on dashboard
+ * @returns {Promise} Trigger information
+ */
+export const getSmartStudyDashboardTrigger = async () => {
+  try {
+    const response = await api.get('/api/v1/smartstudy/dashboard-trigger')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+/**
+ * Get student context for SmartStudy
+ * @returns {Promise} Student context data
+ */
+export const getSmartStudyContext = async () => {
+  try {
+    const response = await api.get('/api/v1/smartstudy/context')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 export default api

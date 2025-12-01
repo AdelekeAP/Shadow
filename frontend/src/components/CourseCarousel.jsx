@@ -1,38 +1,39 @@
 import { useRef, useState, useEffect } from 'react'
 
 /**
- * Get gradient class based on predicted grade
+ * Get gradient colors based on predicted grade (PAU scale)
+ * A: 5.0, B: 4.0, C: 3.0, D: 2.0, E: 1.0, F: 0.0
  */
-const getGradeGradient = (gradePoint) => {
-  if (!gradePoint) return 'from-stone-500 to-stone-600'
-  if (gradePoint >= 4.5) return 'from-emerald-400 to-emerald-600' // A
-  if (gradePoint >= 3.5) return 'from-blue-400 to-blue-600'       // B
-  if (gradePoint >= 2.5) return 'from-amber-400 to-amber-600'     // C
-  if (gradePoint >= 1.5) return 'from-orange-400 to-orange-600'   // D
-  return 'from-red-400 to-red-600'                                 // E/F
+const getGradeColors = (gradePoint) => {
+  if (!gradePoint || gradePoint === 0) return { from: '#f87171', to: '#dc2626' } // red - F
+  if (gradePoint >= 5.0) return { from: '#34d399', to: '#059669' } // emerald-400 to emerald-600 - A
+  if (gradePoint >= 4.0) return { from: '#60a5fa', to: '#2563eb' } // blue-400 to blue-600 - B
+  if (gradePoint >= 3.0) return { from: '#fbbf24', to: '#d97706' } // amber-400 to amber-600 - C
+  if (gradePoint >= 2.0) return { from: '#fb923c', to: '#ea580c' } // orange-400 to orange-600 - D
+  return { from: '#ef4444', to: '#b91c1c' } // red-500 to red-700 - E
 }
 
 /**
- * Get glow color based on grade
+ * Get box shadow based on grade (PAU scale)
  */
-const getGradeGlow = (gradePoint) => {
-  if (!gradePoint) return 'shadow-stone-500/30'
-  if (gradePoint >= 4.5) return 'shadow-emerald-500/40'
-  if (gradePoint >= 3.5) return 'shadow-blue-500/40'
-  if (gradePoint >= 2.5) return 'shadow-amber-500/40'
-  if (gradePoint >= 1.5) return 'shadow-orange-500/40'
-  return 'shadow-red-500/40'
+const getGradeShadow = (gradePoint) => {
+  if (!gradePoint || gradePoint === 0) return '0 10px 15px -3px rgba(239, 68, 68, 0.4), 0 4px 6px -4px rgba(239, 68, 68, 0.4)'
+  if (gradePoint >= 5.0) return '0 10px 15px -3px rgba(16, 185, 129, 0.4), 0 4px 6px -4px rgba(16, 185, 129, 0.4)'
+  if (gradePoint >= 4.0) return '0 10px 15px -3px rgba(59, 130, 246, 0.4), 0 4px 6px -4px rgba(59, 130, 246, 0.4)'
+  if (gradePoint >= 3.0) return '0 10px 15px -3px rgba(245, 158, 11, 0.4), 0 4px 6px -4px rgba(245, 158, 11, 0.4)'
+  if (gradePoint >= 2.0) return '0 10px 15px -3px rgba(249, 115, 22, 0.4), 0 4px 6px -4px rgba(249, 115, 22, 0.4)'
+  return '0 10px 15px -3px rgba(220, 38, 38, 0.4), 0 4px 6px -4px rgba(220, 38, 38, 0.4)'
 }
 
 /**
- * Get grade letter from grade point
+ * Get grade letter from grade point (PAU scale)
  */
 const getGradeLetter = (gradePoint) => {
-  if (!gradePoint) return '-'
-  if (gradePoint >= 4.5) return 'A'
-  if (gradePoint >= 3.5) return 'B'
-  if (gradePoint >= 2.5) return 'C'
-  if (gradePoint >= 1.5) return 'D'
+  if (!gradePoint || gradePoint === 0) return 'F'
+  if (gradePoint >= 5.0) return 'A'
+  if (gradePoint >= 4.0) return 'B'
+  if (gradePoint >= 3.0) return 'C'
+  if (gradePoint >= 2.0) return 'D'
   if (gradePoint >= 1.0) return 'E'
   return 'F'
 }
@@ -159,10 +160,61 @@ export default function CourseCarousel({ enrolledCourses, onCourseClick }) {
         className={`flex gap-5 px-6 py-4 ${isPaused ? 'overflow-x-auto scrollbar-hide' : 'overflow-x-hidden'}`}
       >
         {duplicatedCourses.map((enrollment, index) => {
-          const gradePoint = enrollment.predicted_grade_point
-          const gradeLetter = enrollment.predicted_letter_grade || getGradeLetter(gradePoint)
-          const totalScore = (enrollment.ca_score || 0) + (enrollment.exam_score || 0)
+          // Calculate ACTUAL total score including participation
+          const caFromTasks = enrollment.ca_score || 0  // Out of 30
+          const participationScore = enrollment.participation_score || 0  // Out of 5
+          const totalCA = caFromTasks + participationScore  // Out of 35
+          const examScore = enrollment.exam_score || 0  // Out of 65
+          const totalScore = totalCA + examScore  // Out of 100
+
           const taskCompletion = enrollment.completion_rate || 0
+
+          // Use predicted grade point if available, otherwise estimate from current score
+          let gradePoint = enrollment.predicted_grade_point
+          let isEstimated = false
+
+          // Only use predicted grade point if it's a valid number (and not 0)
+          if (gradePoint === null || gradePoint === undefined || gradePoint === 0) {
+            if (examScore > 0) {
+              // Both CA and exam exist - use actual total score with PAU grading scale
+              if (totalScore >= 70) gradePoint = 5.0        // A
+              else if (totalScore >= 60) gradePoint = 4.0   // B
+              else if (totalScore >= 50) gradePoint = 3.0   // C
+              else if (totalScore >= 45) gradePoint = 2.0   // D
+              else if (totalScore >= 40) gradePoint = 1.0   // E
+              else gradePoint = 0.0                         // F
+              isEstimated = true
+            } else if (totalCA > 0) {
+              // Only CA exists - predict using 85% retention model
+              // If participation not entered, assume 3/5 (average)
+              const caForPrediction = enrollment.participation_score
+                ? totalCA  // Use actual total CA
+                : caFromTasks + 3.0  // Add assumed 3 if not set
+
+              // Predict exam score: (CA/35) * 0.85 * 65
+              const caPercentage = caForPrediction / 35.0
+              const predictedExam = caPercentage * 0.85 * 65.0
+              const predictedTotal = caForPrediction + predictedExam
+
+              // Apply PAU grading scale to predicted total
+              if (predictedTotal >= 70) gradePoint = 5.0      // A
+              else if (predictedTotal >= 60) gradePoint = 4.0 // B
+              else if (predictedTotal >= 50) gradePoint = 3.0 // C
+              else if (predictedTotal >= 45) gradePoint = 2.0 // D
+              else if (predictedTotal >= 40) gradePoint = 1.0 // E
+              else gradePoint = 0.0                           // F
+              isEstimated = true
+            } else {
+              // No data yet - use a neutral blue color to indicate potential (optimistic view)
+              gradePoint = 4.0 // B grade color - represents potential/target
+              isEstimated = true
+            }
+          }
+
+          const gradeLetter = enrollment.predicted_letter_grade || (isEstimated && totalScore === 0 ? '?' : getGradeLetter(gradePoint))
+
+          const colors = getGradeColors(gradePoint)
+          const shadow = getGradeShadow(gradePoint)
 
           return (
             <div
@@ -170,7 +222,11 @@ export default function CourseCarousel({ enrolledCourses, onCourseClick }) {
               onClick={() => onCourseClick?.(enrollment)}
               onMouseEnter={handleCardEnter}
               onMouseLeave={handleCardLeave}
-              className={`flex-shrink-0 w-64 h-36 rounded-xl bg-gradient-to-br ${getGradeGradient(gradePoint)} p-5 cursor-pointer transform hover:scale-105 hover:-translate-y-1 transition-all duration-300 shadow-lg hover:shadow-2xl ${getGradeGlow(gradePoint)}`}
+              className="flex-shrink-0 w-64 h-36 rounded-xl p-5 cursor-pointer transform hover:scale-105 hover:-translate-y-1 transition-all duration-300 relative"
+              style={{
+                background: `linear-gradient(to bottom right, ${colors.from}, ${colors.to})`,
+                boxShadow: shadow
+              }}
             >
               {/* Top row - Course code and grade */}
               <div className="flex justify-between items-start mb-3">
@@ -201,7 +257,21 @@ export default function CourseCarousel({ enrolledCourses, onCourseClick }) {
                     <span className="text-white/60 text-sm">/100</span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-white/70 text-xs">CA: {(enrollment.ca_score || 0).toFixed(0)}/35</span>
+                    {/* Show CA breakdown */}
+                    {(() => {
+                      const isAssumed = !enrollment.participation_score
+
+                      return (
+                        <>
+                          <span className="text-white/70 text-xs">
+                            CA: {totalCA.toFixed(0)}/35
+                          </span>
+                          {isAssumed && (
+                            <span className="text-white/50 text-[10px]">(+3 est.)</span>
+                          )}
+                        </>
+                      )
+                    })()}
                     <span className="text-white/40">•</span>
                     <span className="text-white/70 text-xs">{enrollment.course.credits} cr</span>
                   </div>

@@ -24,9 +24,13 @@ origins = [
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:3002",
+    "http://localhost:3003",
+    "http://localhost:3004",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
     "http://127.0.0.1:3002",
+    "http://127.0.0.1:3003",
+    "http://127.0.0.1:3004",
 ]
 
 app.add_middleware(
@@ -67,7 +71,7 @@ async def health_check():
 
 
 # Import and include routers
-from app.routes import auth, courses, tasks, cgpa, recommendations, mood
+from app.routes import auth, courses, tasks, cgpa, recommendations, mood, smartstudy
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(courses.router, prefix="/api/v1/courses", tags=["Courses"])
@@ -75,6 +79,7 @@ app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["Tasks"])
 app.include_router(cgpa.router, prefix="/api/v1", tags=["CGPA"])
 app.include_router(recommendations.router, prefix="/api/v1", tags=["Recommendations"])
 app.include_router(mood.router, prefix="/api/v1/mood", tags=["Mood Tracking"])
+app.include_router(smartstudy.router, tags=["SmartStudy"])
 
 
 if __name__ == "__main__":

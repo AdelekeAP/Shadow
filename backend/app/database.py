@@ -44,6 +44,6 @@ def init_db():
     """
     Initialize database - create all tables
     """
-    from app.models import user, course, task, mood
+    from app.models import user, course, task, mood, smartstudy
     Base.metadata.create_all(bind=engine)
     print("✅ Database tables created successfully!")

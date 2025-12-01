@@ -21,6 +21,7 @@ class User(Base):
     target_cgpa = Column(Numeric(3, 2), nullable=True)  # User's goal (e.g., 4.50)
     current_cgpa = Column(Numeric(3, 2), nullable=True)
     total_credits_completed = Column(Integer, default=0)
+    learning_style = Column(String(50), nullable=True)  # 'visual', 'auditory', 'reading', 'kinesthetic' for SmartStudy
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True)
@@ -40,6 +41,7 @@ class User(Base):
             "target_cgpa": float(self.target_cgpa) if self.target_cgpa else None,
             "current_cgpa": float(self.current_cgpa) if self.current_cgpa else None,
             "total_credits_completed": self.total_credits_completed,
+            "learning_style": self.learning_style,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_login": self.last_login.isoformat() if self.last_login else None,
             "is_active": self.is_active

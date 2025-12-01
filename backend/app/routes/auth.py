@@ -55,7 +55,7 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
         entry_level=user_data.entry_level,
         target_cgpa=user_data.target_cgpa,
         gpa_scale=5.0,  # PAU uses 5.0 scale
-        current_cgpa=None,
+        current_cgpa=user_data.current_cgpa,
         total_credits_completed=0,
         is_active=True
     )
