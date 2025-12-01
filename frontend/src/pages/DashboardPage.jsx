@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCurrentUser, isAuthenticated, logout, getEnrolledCourses, getTasks, getTaskStats } from '../services/api'
+import { getCurrentUser, isAuthenticated, logout, getEnrolledCourses, getTasks, getTaskStats, getSmartStudyDashboardTrigger, updateEnrollment } from '../services/api'
 import TaskList from '../components/TaskList'
 import AddTaskModal from '../components/AddTaskModal'
 import PriorityRecommendationsCompact from '../components/PriorityRecommendationsCompact'
 import MoodLogger from '../components/MoodLogger'
 import CourseCarousel from '../components/CourseCarousel'
+import SmartStudyChat from '../components/SmartStudyChat'
+import SmartStudyTriggerBanner from '../components/SmartStudyTriggerBanner'
+import EditCourseScoresModal from '../components/EditCourseScoresModal'
 
 function DashboardPage() {
   const navigate = useNavigate()
@@ -18,6 +21,9 @@ function DashboardPage() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [showMoodLogger, setShowMoodLogger] = useState(false)
   const [todayMood, setTodayMood] = useState(null)
+  const [showSmartStudy, setShowSmartStudy] = useState(false)
+  const [editingCourse, setEditingCourse] = useState(null)
+  const [showCourseMenu, setShowCourseMenu] = useState(null) // Store course for menu
 
   useEffect(() => {
     // Check authentication
@@ -95,6 +101,18 @@ function DashboardPage() {
     logout()
   }
 
+  const handleUpdateCourseScores = async (enrollmentId, updateData) => {
+    try {
+      await updateEnrollment(enrollmentId, updateData)
+      // Reload enrollments to show updated data
+      await loadEnrolledCourses()
+      setEditingCourse(null)
+    } catch (error) {
+      console.error('Error updating course scores:', error)
+      throw error
+    }
+  }
+
   const getGradeColor = (gradePoint) => {
     if (!gradePoint) return 'text-stone-400'
     if (gradePoint >= 4.5) return 'text-green-600'
@@ -102,6 +120,7 @@ function DashboardPage() {
     if (gradePoint >= 2.5) return 'text-amber-600'
     return 'text-red-600'
   }
+
 
   const totalCredits = enrolledCourses.reduce((sum, e) => sum + e.course.credits, 0)
   const completedCA = enrolledCourses.filter(e => e.ca_score > 0).length
@@ -132,6 +151,13 @@ function DashboardPage() {
                 className="text-stone-600 hover:text-navy-800 font-medium transition-colors"
               >
                 CGPA
+              </button>
+              <button
+                onClick={() => setShowSmartStudy(true)}
+                className="bg-gradient-to-r from-navy-600 to-navy-700 text-white px-4 py-2 rounded-lg font-medium hover:from-navy-700 hover:to-navy-800 transition-all duration-200 flex items-center gap-2 shadow-md hover:shadow-lg"
+              >
+                <span>🤖</span>
+                <span>SmartStudy AI</span>
               </button>
               <div className="h-6 w-px bg-stone-200" />
               <span className="text-stone-700 font-medium">{user?.full_name || 'User'}</span>
@@ -175,6 +201,13 @@ function DashboardPage() {
               >
                 CGPA Analytics
               </button>
+              <button
+                onClick={() => { setShowSmartStudy(true); setMenuOpen(false); }}
+                className="block w-full text-left px-3 py-2 rounded-lg bg-gradient-to-r from-navy-600 to-navy-700 text-white hover:from-navy-700 hover:to-navy-800 font-medium flex items-center gap-2"
+              >
+                <span>🤖</span>
+                <span>SmartStudy AI</span>
+              </button>
               <div className="border-t border-stone-200 pt-2 mt-2">
                 <div className="px-3 py-2 text-sm text-stone-500">{user?.full_name || 'User'}</div>
                 <button
@@ -194,6 +227,12 @@ function DashboardPage() {
           <h2 className="text-3xl font-bold text-stone-900">Dashboard</h2>
           <p className="text-stone-600 mt-2">Welcome back! Here's your academic overview.</p>
         </div>
+
+        {/* SmartStudy AI Trigger Banner - New trigger system with 8 detection criteria */}
+        <SmartStudyTriggerBanner onOpenSmartStudy={(suggestedPrompt) => {
+          setShowSmartStudy(true);
+          // TODO: Pass suggestedPrompt to SmartStudyChat to auto-fill
+        }} />
 
         {/* CGPA Overview */}
         <div className="bg-gradient-to-br from-navy-800 to-navy-900 rounded-2xl shadow-lg p-6 mb-6 text-white">
@@ -246,8 +285,8 @@ function DashboardPage() {
             <CourseCarousel
               enrolledCourses={enrolledCourses}
               onCourseClick={(enrollment) => {
-                // Open add task modal with course pre-selected
-                setShowAddTaskModal(true)
+                // Show menu to choose action
+                setShowCourseMenu(enrollment)
               }}
             />
           </div>
@@ -472,6 +511,68 @@ function DashboardPage() {
           onClose={() => setShowMoodLogger(false)}
         />
       )}
+
+      {/* SmartStudy Chat - Modal */}
+      {showSmartStudy && (
+        <SmartStudyChat onClose={() => setShowSmartStudy(false)} />
+      )}
+
+      {/* Course Action Menu - Choose between Add Task or Update Scores */}
+      {showCourseMenu && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+            <h3 className="text-xl font-bold text-stone-900 mb-2">
+              {showCourseMenu.course?.code}
+            </h3>
+            <p className="text-sm text-stone-600 mb-6">
+              What would you like to do?
+            </p>
+
+            <div className="space-y-3">
+              <button
+                onClick={() => {
+                  setShowCourseMenu(null)
+                  setShowAddTaskModal(true)
+                }}
+                className="w-full bg-navy-800 text-white px-4 py-3 rounded-lg font-medium hover:bg-navy-900 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Task for this Course
+              </button>
+
+              <button
+                onClick={() => {
+                  setEditingCourse(showCourseMenu)
+                  setShowCourseMenu(null)
+                }}
+                className="w-full bg-white border-2 border-navy-800 text-navy-800 px-4 py-3 rounded-lg font-medium hover:bg-navy-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Update CA/Participation Scores
+              </button>
+
+              <button
+                onClick={() => setShowCourseMenu(null)}
+                className="w-full text-stone-600 hover:text-stone-900 py-2 text-sm font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Course Scores Modal */}
+      <EditCourseScoresModal
+        isOpen={!!editingCourse}
+        onClose={() => setEditingCourse(null)}
+        enrollment={editingCourse}
+        onUpdate={handleUpdateCourseScores}
+      />
     </div>
   )
 }
