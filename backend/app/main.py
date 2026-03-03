@@ -162,7 +162,7 @@ Authentication endpoints are rate-limited to **5 requests per minute** per clien
     redoc_url="/api/redoc",
     openapi_tags=tags_metadata,
     contact={
-        "name": "Shadow Development Team",
+        "name": "Adeleke Paul Aladenusi",
         "url": "https://github.com/shadow-pau",
         "email": "shadow@pau.edu.ng",
     },
