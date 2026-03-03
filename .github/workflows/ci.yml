@@ -1,0 +1,66 @@
+name: Shadow CI
+
+on:
+  push:
+    branches: [master, shadowpreLLM]
+  pull_request:
+    branches: [master]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest pytest-cov bandit
+
+      - name: Run tests with coverage
+        env:
+          DISABLE_ML_MODELS: "true"
+          TESTING: "true"
+          SECRET_KEY: "ci-test-secret-key"
+          ALGORITHM: "HS256"
+          ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+        run: |
+          cd backend
+          PYTHONPATH=. pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -q
+
+      - name: Security scan (bandit)
+        run: |
+          cd backend
+          bandit -r app/ -ll -ii || true
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Lint
+        run: cd frontend && npm run lint
+
+      - name: Run tests
+        run: cd frontend && npm run test:run

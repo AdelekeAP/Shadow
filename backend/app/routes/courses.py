@@ -7,7 +7,7 @@ from typing import List
 from uuid import UUID
 
 from app.database import get_db
-from app.models.course import Course, UserCourse
+from app.models.course import Course, UserCourse, Semester
 from app.models.user import User
 from app.schemas.course import (
     CourseCreate,
@@ -35,7 +35,12 @@ async def get_user_from_token(
     return await get_current_user(token, db)
 
 
-@router.get("/", response_model=List[CourseResponse])
+@router.get(
+    "/",
+    response_model=List[CourseResponse],
+    operation_id="list_courses",
+    summary="List all available courses with optional filters",
+)
 async def get_all_courses(
     db: Session = Depends(get_db),
     level: str = None,
@@ -68,7 +73,12 @@ async def get_all_courses(
     return [CourseResponse(**course.to_dict()) for course in courses]
 
 
-@router.get("/{course_id}", response_model=CourseResponse)
+@router.get(
+    "/{course_id}",
+    response_model=CourseResponse,
+    operation_id="get_course",
+    summary="Get course details by ID",
+)
 async def get_course(course_id: str, db: Session = Depends(get_db)):
     """
     Get a specific course by ID
@@ -98,7 +108,13 @@ async def get_course(course_id: str, db: Session = Depends(get_db)):
     return CourseResponse(**course.to_dict())
 
 
-@router.post("/", response_model=CourseResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=CourseResponse,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_course",
+    summary="Create a new course",
+)
 async def create_course(
     course_data: CourseCreate,
     db: Session = Depends(get_db)
@@ -144,7 +160,13 @@ async def create_course(
     return CourseResponse(**new_course.to_dict())
 
 
-@router.post("/enroll", response_model=UserCourseResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/enroll",
+    response_model=UserCourseResponse,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="enroll_in_course",
+    summary="Enroll in a course",
+)
 async def enroll_in_course(
     enrollment_data: UserCourseCreate,
     db: Session = Depends(get_db),
@@ -192,11 +214,23 @@ async def enroll_in_course(
             detail="Already enrolled in this course"
         )
 
+    # Resolve semester: explicit > active > none
+    semester_id = None
+    if enrollment_data.semester_id:
+        semester_id = UUID(enrollment_data.semester_id)
+    else:
+        active_sem = db.query(Semester).filter(
+            Semester.user_id == current_user.id,
+            Semester.is_active == True
+        ).first()
+        if active_sem:
+            semester_id = active_sem.id
+
     # Create enrollment
     new_enrollment = UserCourse(
         user_id=current_user.id,
         course_id=course_uuid,
-        semester_id=UUID(enrollment_data.semester_id) if enrollment_data.semester_id else None,
+        semester_id=semester_id,
         is_carryover=enrollment_data.is_carryover,
         is_priority=enrollment_data.is_priority,
         ca_score=0,
@@ -210,7 +244,12 @@ async def enroll_in_course(
     return UserCourseResponse(**new_enrollment.to_dict())
 
 
-@router.get("/my-courses/", response_model=List[UserCourseResponse])
+@router.get(
+    "/my-courses/",
+    response_model=List[UserCourseResponse],
+    operation_id="list_my_courses",
+    summary="List enrolled courses",
+)
 async def get_my_courses(
     db: Session = Depends(get_db),
     active_only: bool = True,
@@ -236,7 +275,12 @@ async def get_my_courses(
     return [UserCourseResponse(**enrollment.to_dict()) for enrollment in enrollments]
 
 
-@router.get("/my-courses/{user_course_id}", response_model=UserCourseResponse)
+@router.get(
+    "/my-courses/{user_course_id}",
+    response_model=UserCourseResponse,
+    operation_id="get_enrollment",
+    summary="Get enrollment details",
+)
 async def get_user_course(
     user_course_id: str,
     db: Session = Depends(get_db),
@@ -275,7 +319,12 @@ async def get_user_course(
     return UserCourseResponse(**enrollment.to_dict())
 
 
-@router.patch("/my-courses/{user_course_id}", response_model=UserCourseResponse)
+@router.patch(
+    "/my-courses/{user_course_id}",
+    response_model=UserCourseResponse,
+    operation_id="update_enrollment",
+    summary="Update enrollment details",
+)
 async def update_user_course(
     user_course_id: str,
     update_data: UserCourseUpdate,
@@ -333,7 +382,12 @@ async def update_user_course(
     return UserCourseResponse(**enrollment.to_dict())
 
 
-@router.delete("/my-courses/{user_course_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/my-courses/{user_course_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="unenroll_from_course",
+    summary="Unenroll from a course",
+)
 async def unenroll_from_course(
     user_course_id: str,
     db: Session = Depends(get_db),

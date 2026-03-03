@@ -69,6 +69,8 @@ class StudyPlanCreate(BaseModel):
     trigger_task_id: Optional[UUID] = None
     trigger_score: Optional[float] = None
     duration_days: Optional[int] = Field(None, ge=1, le=30)
+    difficulty_level: Optional[str] = Field("auto", description="beginner, intermediate, advanced, or auto")
+    learning_style: Optional[str] = Field(None, description="visual, audio, reading, kinesthetic, or auto")
 
 
 class StudyPlanResourceResponse(BaseModel):
@@ -121,7 +123,9 @@ class StudyPlanUpdate(BaseModel):
     """Schema for updating a study plan"""
     completion_percentage: Optional[float] = Field(None, ge=0.0, le=100.0)
     is_active: Optional[bool] = None
+    before_score: Optional[float] = None
     after_score: Optional[float] = None
+    completed_days: Optional[List[int]] = None
 
 
 class ResourceClickUpdate(BaseModel):
@@ -133,6 +137,11 @@ class ResourceCompletionUpdate(BaseModel):
     """Schema for marking a resource as completed"""
     completed: bool = True
     helpful_rating: Optional[int] = Field(None, ge=1, le=5)
+
+
+class ResourceReportCreate(BaseModel):
+    """Schema for reporting a broken/irrelevant resource"""
+    reason: str = Field("broken_link", pattern="^(broken_link|irrelevant|outdated)$", description="broken_link, irrelevant, or outdated")
 
 
 # ============================================================================
@@ -220,3 +229,73 @@ class SmartStudyDashboardTrigger(BaseModel):
     trigger_type: str  # 'at_risk', 'struggling', 'behind_schedule'
     trigger_message: str
     suggested_action: str
+
+
+# ============================================================================
+# Video Notes Schemas
+# ============================================================================
+
+class VideoNoteCreate(BaseModel):
+    """Schema for creating a video note"""
+    resource_id: UUID
+    content: str = Field(..., min_length=1, max_length=5000, description="Note content")
+    timestamp_seconds: Optional[int] = Field(None, ge=0, description="Video timestamp in seconds")
+    note_type: Optional[str] = Field("note", description="note, highlight, question, summary")
+    color: Optional[str] = Field("yellow", description="Note color: yellow, green, blue, pink, orange")
+
+
+class VideoNoteUpdate(BaseModel):
+    """Schema for updating a video note"""
+    content: Optional[str] = Field(None, min_length=1, max_length=5000)
+    timestamp_seconds: Optional[int] = Field(None, ge=0)
+    note_type: Optional[str] = None
+    color: Optional[str] = None
+
+
+class VideoNoteResponse(BaseModel):
+    """Schema for video note response"""
+    id: UUID
+    user_id: UUID
+    resource_id: UUID
+    content: str
+    timestamp_seconds: Optional[int] = None
+    formatted_timestamp: Optional[str] = None
+    note_type: str = "note"
+    color: str = "yellow"
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class VideoNotesListResponse(BaseModel):
+    """Schema for listing video notes"""
+    notes: List[VideoNoteResponse]
+    total_count: int
+    resource_id: UUID
+
+
+# ============================================================================
+# Quiz Schemas
+# ============================================================================
+
+class QuizCreate(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=255)
+    quiz_type: str = Field("quick_quiz")
+    question_count: Optional[int] = Field(None, ge=5, le=50)
+    time_limit_minutes: Optional[int] = Field(None, ge=1, le=180)
+    difficulty_level: Optional[str] = Field("mixed")
+    study_plan_id: Optional[str] = None
+    course_id: Optional[str] = None
+
+
+class QuizAnswer(BaseModel):
+    question_id: int
+    user_answer: str = Field("", max_length=5000)
+
+
+class QuizSubmission(BaseModel):
+    answers: List[QuizAnswer] = Field(..., min_length=1, max_length=50)
+    time_taken_seconds: Optional[int] = Field(None, ge=0)
+    timed_out: bool = False

@@ -202,18 +202,25 @@ class CGPACalculator:
         user = db.query(User).filter(User.id == user_id).first()
         user_target_cgpa = float(user.target_cgpa) if user and user.target_cgpa else 4.5
 
-        # Get all user's enrolled courses
+        # Get all user's enrolled courses with semester data
         user_courses = db.query(UserCourse).filter(UserCourse.user_id == user_id).all()
 
-        # Group by semester (for now, use a default semester since we may not have semester data)
+        # Group by actual semester (using semester_id FK)
         semesters = {}
+        semester_order = {}  # track start_date for sorting
         for user_course in user_courses:
-            # Default semester key if no semester assigned
-            semester_key = "Current Semester"
+            if user_course.semester_id and user_course.semester:
+                semester_key = str(user_course.semester_id)
+                semester_name = user_course.semester.name
+                semester_order[semester_key] = user_course.semester.start_date
+            else:
+                semester_key = "unassigned"
+                semester_name = "Current Semester"
+                semester_order[semester_key] = None
 
             if semester_key not in semesters:
                 semesters[semester_key] = {
-                    'name': semester_key,
+                    'name': semester_name,
                     'courses': []
                 }
 
@@ -238,8 +245,15 @@ class CGPACalculator:
                 'grade_point': CGPACalculator.calculate_course_gpa(current_score)
             })
 
-        # Calculate cumulative GPA
-        semester_list = list(semesters.values())
+        # Sort semesters chronologically (by start_date, unassigned last)
+        def _sort_key(key):
+            dt = semester_order.get(key)
+            if dt is None:
+                return (1, "")  # unassigned goes last
+            return (0, dt.isoformat() if hasattr(dt, 'isoformat') else str(dt))
+
+        sorted_keys = sorted(semesters.keys(), key=_sort_key)
+        semester_list = [semesters[k] for k in sorted_keys]
         cumulative_data = CGPACalculator.calculate_cumulative_gpa(semester_list)
 
         # Get predicted courses (courses with incomplete tasks)

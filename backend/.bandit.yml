@@ -1,0 +1,11 @@
+### Bandit Security Scanner Configuration
+### Run: bandit -r app/ -c .bandit.yml
+
+skips:
+  - B101  # assert_used - OK in production code for invariants
+
+exclude_dirs:
+  - tests
+  - venv
+  - __pycache__
+  - alembic

@@ -1,6 +1,7 @@
 """
 CGPA Routes - API endpoints for CGPA calculations and analytics
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Dict, List
@@ -8,8 +9,11 @@ from app.database import get_db
 from app.utils.auth import get_current_user
 from app.utils.cgpa_calculator import CGPACalculator
 from app.models.user import User
-from app.models.course import Course
+from app.models.course import Course, UserCourse, Semester
+from app.models.task import Task
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/cgpa", tags=["CGPA"])
@@ -26,7 +30,11 @@ class PredictionRequest(BaseModel):
     predicted_courses: List[Dict]
 
 
-@router.get("/dashboard")
+@router.get(
+    "/dashboard",
+    operation_id="get_cgpa_dashboard",
+    summary="Get comprehensive CGPA dashboard data",
+)
 def get_cgpa_dashboard(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -47,13 +55,15 @@ def get_cgpa_dashboard(
             "data": cgpa_data
         }
     except Exception as e:
-        import traceback
-        print(f"CGPA Dashboard Error: {str(e)}")
-        print(traceback.format_exc())
+        logger.error("CGPA Dashboard Error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error calculating CGPA: {str(e)}")
 
 
-@router.get("/current")
+@router.get(
+    "/current",
+    operation_id="get_current_cgpa",
+    summary="Get current CGPA only",
+)
 def get_current_cgpa(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -76,7 +86,11 @@ def get_current_cgpa(
         raise HTTPException(status_code=500, detail=f"Error calculating CGPA: {str(e)}")
 
 
-@router.get("/semester/{semester}/{year}")
+@router.get(
+    "/semester/{semester}/{year}",
+    operation_id="get_semester_gpa",
+    summary="Get GPA for a specific semester",
+)
 def get_semester_gpa(
     semester: str,
     year: int,
@@ -94,14 +108,33 @@ def get_semester_gpa(
         Semester GPA and course breakdown
     """
     try:
-        # Get courses for this semester
-        courses = db.query(Course).filter(
-            Course.user_id == current_user.id,
-            Course.semester == semester,
-            Course.year == year
+        # Find matching semester for this user
+        semester_obj = db.query(Semester).filter(
+            Semester.user_id == current_user.id,
+            Semester.name.ilike(f"%{semester}%{year}%")
+        ).first()
+
+        if not semester_obj:
+            # Try academic_year match
+            semester_obj = db.query(Semester).filter(
+                Semester.user_id == current_user.id,
+                Semester.academic_year.ilike(f"%{year}%"),
+                Semester.name.ilike(f"%{semester}%")
+            ).first()
+
+        if not semester_obj:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No semester found for {semester} {year}"
+            )
+
+        # Get user courses for this semester
+        user_courses = db.query(UserCourse).filter(
+            UserCourse.user_id == current_user.id,
+            UserCourse.semester_id == semester_obj.id
         ).all()
 
-        if not courses:
+        if not user_courses:
             raise HTTPException(
                 status_code=404,
                 detail=f"No courses found for {semester} {year}"
@@ -109,22 +142,21 @@ def get_semester_gpa(
 
         # Calculate semester GPA
         course_data = []
-        for course in courses:
-            from app.models.task import Task
+        for uc in user_courses:
             tasks = db.query(Task).filter(
-                Task.course_id == course.id,
-                Task.score.isnot(None)
+                Task.user_course_id == uc.id,
+                Task.earned_marks.isnot(None)
             ).all()
 
-            total_weight = sum(task.weight for task in tasks)
-            weighted_score = sum(task.score * (task.weight / 100) for task in tasks)
+            total_weight = sum(task.weight for task in tasks if task.weight)
+            weighted_score = sum((task.earned_marks or 0) * (task.weight / 100) for task in tasks if task.weight)
             current_score = weighted_score if total_weight > 0 else 0
 
             course_data.append({
-                'credits': course.credits,
+                'credits': uc.course.credits if uc.course else 0,
                 'score': current_score,
-                'course_code': course.course_code,
-                'title': course.title
+                'course_code': uc.course.code if uc.course else 'Unknown',
+                'title': uc.course.title if uc.course else 'Unknown'
             })
 
         semester_result = CGPACalculator.calculate_semester_gpa(course_data)
@@ -143,7 +175,11 @@ def get_semester_gpa(
         raise HTTPException(status_code=500, detail=f"Error calculating semester GPA: {str(e)}")
 
 
-@router.post("/target")
+@router.post(
+    "/target",
+    operation_id="calculate_target_requirements",
+    summary="Calculate what GPA is needed to reach a target CGPA",
+)
 def calculate_target_requirements(
     request: TargetCGPARequest,
     current_user: User = Depends(get_current_user),
@@ -180,7 +216,11 @@ def calculate_target_requirements(
         raise HTTPException(status_code=500, detail=f"Error calculating target: {str(e)}")
 
 
-@router.post("/predict")
+@router.post(
+    "/predict",
+    operation_id="predict_final_cgpa",
+    summary="Predict final CGPA based on predicted course performance",
+)
 def predict_final_cgpa(
     request: PredictionRequest,
     current_user: User = Depends(get_current_user),
@@ -215,7 +255,11 @@ def predict_final_cgpa(
         raise HTTPException(status_code=500, detail=f"Error predicting CGPA: {str(e)}")
 
 
-@router.get("/breakdown")
+@router.get(
+    "/breakdown",
+    operation_id="get_semester_breakdown",
+    summary="Get detailed semester-by-semester breakdown",
+)
 def get_semester_breakdown(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -239,7 +283,11 @@ def get_semester_breakdown(
         raise HTTPException(status_code=500, detail=f"Error getting breakdown: {str(e)}")
 
 
-@router.get("/analytics")
+@router.get(
+    "/analytics",
+    operation_id="get_cgpa_analytics",
+    summary="Get advanced CGPA analytics and insights",
+)
 def get_cgpa_analytics(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -264,14 +312,15 @@ def get_cgpa_analytics(
                 "analytics": None
             }
 
-        # Calculate trends
-        semester_gpas = [s['courses'] for s in semesters]
+        # Calculate trends with semester names
         gpa_values = []
+        semester_names = []
 
-        for semester_courses in semester_gpas:
-            if semester_courses:
-                sem_result = CGPACalculator.calculate_semester_gpa(semester_courses)
+        for s in semesters:
+            if s['courses']:
+                sem_result = CGPACalculator.calculate_semester_gpa(s['courses'])
                 gpa_values.append(sem_result['gpa'])
+                semester_names.append(s['name'])
 
         # Best and worst semesters
         best_gpa = max(gpa_values) if gpa_values else 0
@@ -305,7 +354,8 @@ def get_cgpa_analytics(
                 "trend": trend,
                 "grade_distribution": grade_distribution,
                 "total_semesters": len(gpa_values),
-                "semester_gpa_history": gpa_values
+                "semester_gpa_history": gpa_values,
+                "semester_names": semester_names
             }
         }
 

@@ -1,192 +1,187 @@
 import { useState, useEffect } from 'react';
 import api from '../services/api';
 
+/* ─── urgency config ─── */
+const urgency = (score) => {
+  if (score >= 8) return {
+    dot: 'bg-red-500', ring: 'ring-red-500/20', tint: 'bg-red-500/[0.04]',
+    badge: 'bg-red-50 text-red-600 border-red-100', label: 'Critical',
+    bar: 'from-red-500 to-rose-400',
+  }
+  if (score >= 6) return {
+    dot: 'bg-amber-500', ring: 'ring-amber-500/20', tint: 'bg-amber-500/[0.03]',
+    badge: 'bg-amber-50 text-amber-600 border-amber-100', label: 'High',
+    bar: 'from-amber-500 to-orange-400',
+  }
+  return {
+    dot: 'bg-sky-500', ring: 'ring-sky-500/20', tint: 'bg-sky-500/[0.03]',
+    badge: 'bg-sky-50 text-sky-600 border-sky-100', label: 'Normal',
+    bar: 'from-sky-500 to-blue-400',
+  }
+}
+
+const relativeDue = (d) => {
+  if (!d) return null
+  const diff = Math.ceil((new Date(d) - new Date()) / 864e5)
+  if (diff < 0) return { text: `${Math.abs(diff)}d overdue`, cls: 'text-red-500 font-semibold' }
+  if (diff === 0) return { text: 'Today', cls: 'text-amber-600 font-semibold' }
+  if (diff === 1) return { text: 'Tomorrow', cls: 'text-amber-500' }
+  return { text: `${diff}d left`, cls: 'text-surface-400' }
+}
+
 export default function PriorityRecommendationsCompact({ onTaskClick }) {
-  const [recommendations, setRecommendations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [recs, setRecs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  useEffect(() => {
-    fetchRecommendations();
-  }, []);
+  useEffect(() => { fetch() }, [])
 
-  const fetchRecommendations = async () => {
+  const fetch = async () => {
     try {
-      setLoading(true);
-      const response = await api.get('/api/v1/recommendations/priority-tasks?limit=3');
+      setLoading(true)
+      const r = await api.get('/api/v1/recommendations/priority-tasks?limit=3')
+      if (r.data.success) setRecs(r.data.recommendations.slice(0, 3))
+    } catch { setError(true) }
+    finally { setLoading(false) }
+  }
 
-      if (response.data.success) {
-        setRecommendations(response.data.recommendations.slice(0, 3)); // Top 3 only
-      }
-    } catch (err) {
-      console.error('Error fetching recommendations:', err);
-      setError('Failed to load recommendations');
-    } finally {
-      setLoading(false);
-    }
-  };
+  /* ── loading skeleton ── */
+  if (loading) return (
+    <div className="rounded-2xl border border-surface-200/80 bg-white p-5">
+      <div className="animate-pulse space-y-4">
+        <div className="h-4 w-32 bg-surface-100 rounded-lg" />
+        {[0,1,2].map(i => (
+          <div key={i} className="flex items-center gap-3">
+            <div className="w-7 h-7 rounded-lg bg-surface-100" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3.5 bg-surface-100 rounded w-3/4" />
+              <div className="h-2.5 bg-surface-100 rounded w-1/2" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 
-  const getPriorityColor = (score) => {
-    if (score >= 8) return { bg: 'bg-red-500', text: 'text-red-700', border: 'border-red-500', light: 'bg-red-50' };
-    if (score >= 6) return { bg: 'bg-orange-500', text: 'text-orange-700', border: 'border-orange-500', light: 'bg-orange-50' };
-    return { bg: 'bg-yellow-500', text: 'text-yellow-700', border: 'border-yellow-500', light: 'bg-yellow-50' };
-  };
+  if (error) return (
+    <div className="rounded-2xl border border-surface-200/80 bg-white p-5">
+      <p className="text-[13px] text-red-500">Failed to load priorities</p>
+    </div>
+  )
 
-  const getPriorityLabel = (score) => {
-    if (score >= 8) return '🔥 CRITICAL';
-    if (score >= 6) return '⚡ HIGH';
-    return '💼 MEDIUM';
-  };
-
-  const formatDueDate = (dueDate) => {
-    if (!dueDate) return null;
-    const date = new Date(dueDate);
-    const now = new Date();
-    const diffTime = date - now;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays < 0) return `Overdue ${Math.abs(diffDays)}d`;
-    if (diffDays === 0) return 'Due today';
-    if (diffDays === 1) return 'Due tomorrow';
-    return `Due in ${diffDays}d`;
-  };
-
-  if (loading) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-6">
-        <div className="animate-pulse space-y-3">
-          <div className="h-6 bg-stone-200 rounded w-1/3"></div>
-          <div className="h-20 bg-stone-100 rounded"></div>
-          <div className="h-20 bg-stone-100 rounded"></div>
+  if (!recs.length) return (
+    <div className="rounded-2xl border border-surface-200/80 bg-white p-6">
+      <div className="text-center py-6">
+        <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-3">
+          <svg className="w-6 h-6 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
         </div>
+        <p className="text-[14px] font-semibold text-navy-900">All caught up</p>
+        <p className="text-[12px] text-surface-400 mt-0.5">No pending tasks to prioritize</p>
       </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-6">
-        <p className="text-red-600 text-sm">{error}</p>
-      </div>
-    );
-  }
-
-  if (recommendations.length === 0) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-6">
-        <div className="text-center py-8">
-          <div className="text-4xl mb-2">🎉</div>
-          <p className="text-stone-700 font-semibold">All caught up!</p>
-          <p className="text-sm text-stone-500 mt-1">No pending tasks</p>
-        </div>
-      </div>
-    );
-  }
+    </div>
+  )
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-stone-200 overflow-hidden">
-      {/* Compact Header */}
-      <div className="p-5 bg-gradient-to-r from-navy-800 to-navy-900">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-2xl">
-            🎯
+    <div className="rounded-2xl border border-surface-200/80 bg-white overflow-hidden">
+      {/* Header */}
+      <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-navy-800 flex items-center justify-center">
+            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+            </svg>
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white">What to Focus On Next</h2>
-            <p className="text-white/70 text-xs">AI-powered • Top {recommendations.length} priorities</p>
+            <h2 className="text-[15px] font-bold text-navy-900 leading-tight">Focus Next</h2>
+            <p className="text-[11px] text-surface-400">Top {recs.length} AI-ranked priorities</p>
           </div>
         </div>
       </div>
 
-      {/* Compact Cards */}
-      <div className="p-5 space-y-3">
-        {recommendations.map((rec, index) => {
-          const colors = getPriorityColor(rec.priority_score);
-          const priorityPercent = Math.round((rec.priority_score / 10) * 100);
+      {/* Recommendation rows */}
+      <div className="px-3 pb-3">
+        {recs.map((rec, i) => {
+          const u = urgency(rec.priority_score)
+          const due = relativeDue(rec.due_date)
+          const pct = Math.round((rec.priority_score / 10) * 100)
 
           return (
             <div
               key={rec.task_id}
-              className={`relative bg-white rounded-lg border-l-4 ${colors.border} p-4 hover:shadow-md transition-all ${colors.light}`}
+              className={`group relative rounded-xl p-3.5 mb-1.5 last:mb-0 transition-all duration-200 hover:bg-surface-50 ${rec.is_overdue ? u.tint : ''}`}
+              style={{ animationDelay: `${i * 60}ms` }}
             >
-              <div className="flex items-start gap-4">
-                {/* Rank Badge - Compact */}
-                <div className={`flex-shrink-0 w-10 h-10 rounded-full ${colors.bg} text-white font-bold text-lg flex items-center justify-center shadow-sm`}>
-                  {index + 1}
+              <div className="flex items-start gap-3">
+                {/* Rank */}
+                <div className="flex-shrink-0 mt-0.5">
+                  <div className={`w-7 h-7 rounded-lg bg-surface-100 flex items-center justify-center ring-2 ${u.ring} transition-all group-hover:ring-4`}>
+                    <span className="font-mono text-[13px] font-bold text-navy-800">{i + 1}</span>
+                  </div>
                 </div>
 
-                {/* Content - Horizontal Layout */}
+                {/* Content */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex-1 min-w-0 pr-3">
-                      <h3 className="text-base font-bold text-stone-900 truncate">{rec.title}</h3>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className="px-2 py-0.5 text-xs font-semibold rounded bg-navy-100 text-navy-800">
-                          {rec.course_code}
-                        </span>
-                        <span className="px-2 py-0.5 text-xs font-semibold rounded bg-stone-100 text-stone-700">
-                          {rec.task_type}
-                        </span>
-                        <span className="text-xs text-stone-600">{rec.weight} marks</span>
-                        {rec.is_overdue && (
-                          <span className="text-xs font-semibold text-red-600">
-                            • {formatDueDate(rec.due_date)}
-                          </span>
-                        )}
-                        {!rec.is_overdue && rec.due_date && (
-                          <span className="text-xs text-stone-500">
-                            • {formatDueDate(rec.due_date)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Priority Badge */}
-                    <span className={`flex-shrink-0 px-3 py-1 text-xs font-bold rounded-lg ${colors.light} ${colors.text} border ${colors.border}`}>
-                      {getPriorityLabel(rec.priority_score)}
+                  {/* Title row */}
+                  <div className="flex items-start justify-between gap-2 mb-1.5">
+                    <h3 className="text-[13px] font-semibold text-navy-900 leading-snug line-clamp-2">{rec.title}</h3>
+                    <span className={`flex-shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md border ${u.badge}`}>
+                      {u.label}
                     </span>
                   </div>
 
-                  {/* Alert Message - Inline */}
-                  {rec.is_overdue && (
-                    <div className={`flex items-center gap-2 mb-3 p-2 rounded-md ${colors.light} border ${colors.border}`}>
-                      <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                      </svg>
-                      <p className="text-xs font-semibold">
-                        Overdue! Complete ASAP to avoid penalties.
-                      </p>
-                    </div>
-                  )}
+                  {/* Meta line */}
+                  <div className="flex items-center gap-1.5 flex-wrap mb-2.5">
+                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-navy-800/[0.06] text-navy-700">
+                      {rec.course_code}
+                    </span>
+                    <span className="text-surface-300">·</span>
+                    <span className="text-[11px] text-surface-400">{rec.task_type}</span>
+                    <span className="text-surface-300">·</span>
+                    <span className="text-[11px] text-surface-400">{rec.weight}mk</span>
+                    {due && (
+                      <>
+                        <span className="text-surface-300">·</span>
+                        <span className={`text-[11px] ${due.cls}`}>{due.text}</span>
+                      </>
+                    )}
+                  </div>
 
-                  {/* Priority Bar & CTA - Inline */}
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-stone-600">Priority</span>
-                        <span className={`text-sm font-bold ${colors.text}`}>{priorityPercent}%</span>
-                      </div>
-                      <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
+                  {/* Priority bar + CTA */}
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex-1 flex items-center gap-2">
+                      <div className="flex-1 h-1.5 bg-surface-100 rounded-full overflow-hidden">
                         <div
-                          className={`h-2 rounded-full ${colors.bg} transition-all duration-500`}
-                          style={{ width: `${priorityPercent}%` }}
+                          className={`h-full rounded-full bg-gradient-to-r ${u.bar} transition-all duration-700`}
+                          style={{ width: `${pct}%` }}
                         />
                       </div>
+                      <span className="font-mono text-[11px] font-semibold text-surface-400 w-8 text-right">{pct}%</span>
                     </div>
-
                     <button
                       onClick={() => onTaskClick?.(rec.task_id)}
-                      className={`flex-shrink-0 px-4 py-2 ${colors.bg} hover:opacity-90 text-white text-xs font-medium rounded-lg transition-all`}
+                      className="flex-shrink-0 px-3 py-1 bg-navy-800 text-white text-[11px] font-semibold rounded-lg hover:bg-navy-900 transition-colors opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all duration-200"
                     >
-                      {index === 0 ? 'Work On This →' : index === 1 ? 'Start Task →' : 'View Task →'}
+                      Focus
                     </button>
                   </div>
+
+                  {/* Overdue alert */}
+                  {rec.is_overdue && (
+                    <div className="mt-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-50 border border-red-100">
+                      <svg className="w-3 h-3 text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                      </svg>
+                      <p className="text-[10px] font-semibold text-red-600">Overdue — complete ASAP</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          );
+          )
         })}
       </div>
     </div>
-  );
+  )
 }

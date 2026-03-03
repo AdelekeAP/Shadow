@@ -7,33 +7,39 @@ from transformers import pipeline
 from typing import Optional, Dict
 import logging
 import torch
+import os
 
 logger = logging.getLogger(__name__)
 
 # Initialize the emotion analysis pipeline with 7-emotion model
 # Model detects: joy, sadness, anxiety, fear, anger, disgust, surprise
-try:
-    # Check for available device (MPS for Mac, CUDA for others, CPU fallback)
-    device = -1  # CPU default
-    if torch.cuda.is_available():
-        device = 0
-        logger.info("🚀 Using CUDA GPU for emotion analysis")
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        device = "mps"
-        logger.info("🚀 Using Apple MPS GPU for emotion analysis")
-    else:
-        logger.info("💻 Using CPU for emotion analysis")
+# Can be disabled with DISABLE_ML_MODELS=true for faster startup
+emotion_analyzer = None
+if os.getenv("DISABLE_ML_MODELS", "").lower() != "true":
+    try:
+        # Check for available device (MPS for Mac, CUDA for others, CPU fallback)
+        device = -1  # CPU default
+        if torch.cuda.is_available():
+            device = 0
+            logger.info("Using CUDA GPU for emotion analysis")
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = "mps"
+            logger.info("Using Apple MPS GPU for emotion analysis")
+        else:
+            logger.info("Using CPU for emotion analysis")
 
-    emotion_analyzer = pipeline(
-        "text-classification",
-        model="j-hartmann/emotion-english-distilroberta-base",
-        device=device,
-        top_k=None  # Return all emotion scores
-    )
-    logger.info("✅ 7-emotion analysis model loaded successfully")
-except Exception as e:
-    logger.error(f"❌ Failed to load emotion analysis model: {e}")
-    emotion_analyzer = None
+        emotion_analyzer = pipeline(
+            "text-classification",
+            model="j-hartmann/emotion-english-distilroberta-base",
+            device=device,
+            top_k=None  # Return all emotion scores
+        )
+        logger.info("7-emotion analysis model loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to load emotion analysis model: {e}")
+        emotion_analyzer = None
+else:
+    logger.info("Emotion analysis disabled via DISABLE_ML_MODELS")
 
 
 def analyze_emotion(text: str) -> Optional[Dict]:

@@ -1,254 +1,165 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { register } from '../services/api'
+import { useAuth } from '../contexts/AuthContext'
 
 function RegisterPage() {
-  const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    password: '',
-    confirmPassword: '',
-    universityId: '',
-    entryLevel: '400L',
-    currentCgpa: '',
-    targetCgpa: '4.50'
+  const [form, setForm] = useState({
+    fullName: '', email: '', password: '', confirmPassword: '',
+    universityId: '', entryLevel: '400L', currentCgpa: '', targetCgpa: '4.50',
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+  const { register } = useAuth()
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    })
-  }
+  const set = (k, v) => { setForm(p => ({ ...p, [k]: v })); setError('') }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+    if (form.password !== form.confirmPassword) { setError('Passwords do not match'); return }
+    if (form.password.length < 8) { setError('Password must be at least 8 characters'); return }
+
     setLoading(true)
-
-    // Validation
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match')
-      setLoading(false)
-      return
-    }
-
-    if (formData.password.length < 8) {
-      setError('Password must be at least 8 characters long')
-      setLoading(false)
-      return
-    }
-
     try {
-      // Prepare data for API (match backend schema)
-      const registrationData = {
-        full_name: formData.fullName,
-        email: formData.email,
-        password: formData.password,
-        university_id: formData.universityId || null,
-        entry_level: formData.entryLevel,
-        current_cgpa: formData.currentCgpa ? parseFloat(formData.currentCgpa) : null,
-        target_cgpa: parseFloat(formData.targetCgpa)
-      }
-
-      // Call registration API
-      const response = await register(registrationData)
-
-      console.log('✅ Registration successful:', response)
-
-      // Redirect to dashboard on success
+      await register({
+        full_name: form.fullName, email: form.email, password: form.password,
+        university_id: form.universityId || null, entry_level: form.entryLevel,
+        current_cgpa: form.currentCgpa ? parseFloat(form.currentCgpa) : null,
+        target_cgpa: parseFloat(form.targetCgpa),
+      })
       navigate('/dashboard')
     } catch (err) {
-      console.error('❌ Registration error:', err)
-
-      // Handle error messages
-      if (err.detail) {
-        setError(err.detail)
-      } else if (typeof err === 'string') {
-        setError(err)
-      } else {
-        setError('Registration failed. Please try again.')
-      }
-    } finally {
-      setLoading(false)
-    }
+      setError(err.detail || (typeof err === 'string' ? err : 'Registration failed. Please try again.'))
+    } finally { setLoading(false) }
   }
 
+  const inputCls = "w-full bg-surface-50 border border-surface-200/80 rounded-xl px-4 py-2.5 text-[13px] text-navy-900 placeholder:text-surface-300 focus:border-navy-300 focus:ring-2 focus:ring-navy-100 focus:bg-white transition-all outline-none"
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50 px-4 py-8">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-sm border border-stone-200 p-8">
-        <h2 className="text-3xl font-bold text-center text-stone-900 mb-2">
-          Join Shadow
-        </h2>
-        <p className="text-center text-stone-600 mb-8 text-sm">
-          Start achieving your academic goals
-        </p>
+    <div className="min-h-screen flex bg-surface-50">
+      {/* Left panel — brand */}
+      <div className="hidden lg:flex lg:w-[45%] relative overflow-hidden bg-gradient-to-br from-navy-900 via-navy-800 to-[#0c1425]">
+        <div className="absolute inset-0 opacity-[0.03]" style={{
+          backgroundImage: 'linear-gradient(rgba(255,255,255,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.15) 1px, transparent 1px)',
+          backgroundSize: '48px 48px',
+        }} />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full bg-emerald-500/[0.06] blur-[120px]" />
 
-        {error && (
-          <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-4 text-sm">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="fullName" className="block text-sm font-medium text-stone-700 mb-1">
-              Full Name
-            </label>
-            <input
-              id="fullName"
-              name="fullName"
-              type="text"
-              value={formData.fullName}
-              onChange={handleChange}
-              required
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
-              placeholder="Paul Adeleke Aladenusi"
-            />
+        <div className="relative z-10 flex flex-col justify-between p-12 w-full">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
+              <span className="text-white font-display text-[15px] font-bold">S</span>
+            </div>
+            <span className="text-[16px] font-bold text-white/90">Shadow</span>
           </div>
 
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-stone-700 mb-1">
-              Email Address
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              value={formData.email}
-              onChange={handleChange}
-              required
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
-              placeholder="your.email@pau.edu.ng"
-            />
+            <h1 className="font-display text-[2.5rem] font-bold text-white leading-[1.15] tracking-tight mb-4">
+              Set your target.<br />We'll track the rest.
+            </h1>
+            <p className="text-[15px] text-white/40 leading-relaxed max-w-sm">
+              AI-powered grade predictions, smart task prioritization, and study recommendations built for PAU.
+            </p>
           </div>
 
-          <div>
-            <label htmlFor="universityId" className="block text-sm font-medium text-stone-700 mb-1">
-              Student ID (Optional)
-            </label>
-            <input
-              id="universityId"
-              name="universityId"
-              type="text"
-              value={formData.universityId}
-              onChange={handleChange}
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
-              placeholder="21120612479"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="entryLevel" className="block text-sm font-medium text-stone-700 mb-1">
-              Current Level
-            </label>
-            <select
-              id="entryLevel"
-              name="entryLevel"
-              value={formData.entryLevel}
-              onChange={handleChange}
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200 bg-white"
-            >
-              <option value="100L">100 Level</option>
-              <option value="200L">200 Level</option>
-              <option value="300L">300 Level</option>
-              <option value="400L">400 Level</option>
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="currentCgpa" className="block text-sm font-medium text-stone-700 mb-1">
-              Current CGPA (Optional)
-            </label>
-            <input
-              id="currentCgpa"
-              name="currentCgpa"
-              type="number"
-              step="0.01"
-              min="0"
-              max="5"
-              value={formData.currentCgpa}
-              onChange={handleChange}
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
-              placeholder="0.00"
-            />
-            <p className="text-xs text-stone-500 mt-1">Leave blank if you're a new student</p>
-          </div>
-
-          <div>
-            <label htmlFor="targetCgpa" className="block text-sm font-medium text-stone-700 mb-1">
-              Target CGPA
-            </label>
-            <input
-              id="targetCgpa"
-              name="targetCgpa"
-              type="number"
-              step="0.01"
-              min="0"
-              max="5"
-              value={formData.targetCgpa}
-              onChange={handleChange}
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
-              placeholder="4.50"
-            />
-            <p className="text-xs text-stone-500 mt-1">First Class = 4.50+</p>
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-stone-700 mb-1">
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              value={formData.password}
-              onChange={handleChange}
-              required
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
-              placeholder="••••••••"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium text-stone-700 mb-1">
-              Confirm Password
-            </label>
-            <input
-              id="confirmPassword"
-              name="confirmPassword"
-              type="password"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              required
-              className="w-full px-4 py-3 border-2 border-stone-200 rounded-lg focus:ring-4 focus:ring-navy-100 focus:border-navy-500 transition-all duration-200"
-              placeholder="••••••••"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-navy-800 text-white py-3 rounded-lg font-semibold hover:bg-navy-900 transition-colors disabled:bg-stone-400 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Creating Account...' : 'Create Account'}
-          </button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-stone-600">
-          Already have an account?{' '}
-          <Link to="/login" className="text-navy-800 hover:text-navy-900 font-semibold">
-            Login here
-          </Link>
-        </p>
-
-        <Link to="/" className="block mt-4 text-center text-sm text-stone-500 hover:text-stone-700">
-          ← Back to home
-        </Link>
+          <p className="text-[11px] text-white/20 font-medium">Pan-Atlantic University</p>
+        </div>
       </div>
+
+      {/* Right panel — form */}
+      <div className="flex-1 flex items-center justify-center px-6 py-10">
+        <div className="w-full max-w-sm">
+          {/* Mobile logo */}
+          <div className="flex items-center gap-2.5 mb-8 lg:hidden">
+            <div className="w-8 h-8 rounded-lg bg-navy-800 flex items-center justify-center">
+              <span className="text-white font-display text-[15px] font-bold">S</span>
+            </div>
+            <span className="text-[16px] font-bold text-navy-900">Shadow</span>
+          </div>
+
+          <h2 className="font-display text-[24px] font-bold text-navy-900 tracking-tight mb-1">Create account</h2>
+          <p className="text-[13px] text-surface-400 mb-6">Start tracking your academic goals</p>
+
+          {error && (
+            <div className="px-4 py-2.5 rounded-xl bg-red-50 border border-red-100 flex items-center gap-2 mb-5">
+              <svg className="w-4 h-4 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+              <span className="text-[12px] font-medium text-red-600">{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-3.5">
+            <Field label="Full name">
+              <input type="text" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} required className={inputCls} placeholder="Paul Adeleke" />
+            </Field>
+
+            <Field label="Email">
+              <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} required className={inputCls} placeholder="your.email@pau.edu.ng" />
+            </Field>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Student ID" hint="optional">
+                <input type="text" value={form.universityId} onChange={(e) => set('universityId', e.target.value)} className={inputCls} placeholder="21120612479" />
+              </Field>
+              <Field label="Level">
+                <select value={form.entryLevel} onChange={(e) => set('entryLevel', e.target.value)} className={inputCls}>
+                  <option value="100L">100 Level</option>
+                  <option value="200L">200 Level</option>
+                  <option value="300L">300 Level</option>
+                  <option value="400L">400 Level</option>
+                </select>
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Current CGPA" hint="optional">
+                <input type="number" step="0.01" min="0" max="5" value={form.currentCgpa} onChange={(e) => set('currentCgpa', e.target.value)} className={`${inputCls} font-mono`} placeholder="0.00" />
+              </Field>
+              <Field label="Target CGPA">
+                <input type="number" step="0.01" min="0" max="5" value={form.targetCgpa} onChange={(e) => set('targetCgpa', e.target.value)} className={`${inputCls} font-mono`} placeholder="4.50" />
+                <p className="text-[10px] text-surface-300 mt-0.5">First Class = 4.50+</p>
+              </Field>
+            </div>
+
+            <Field label="Password">
+              <input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} required className={inputCls} placeholder="Min 8 characters" />
+            </Field>
+
+            <Field label="Confirm password">
+              <input type="password" value={form.confirmPassword} onChange={(e) => set('confirmPassword', e.target.value)} required className={inputCls} placeholder="Re-enter password" />
+            </Field>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-navy-800 hover:bg-navy-900 text-white py-3 rounded-xl text-[13px] font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-1"
+            >
+              {loading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : 'Create Account'}
+            </button>
+          </form>
+
+          <p className="mt-6 text-center text-[13px] text-surface-400">
+            Already have an account?{' '}
+            <Link to="/login" className="text-navy-700 hover:text-navy-900 font-semibold transition-colors">Sign in</Link>
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <div>
+      <label className="flex items-baseline gap-1.5 mb-1.5">
+        <span className="text-[12px] font-semibold text-navy-800 uppercase tracking-wider">{label}</span>
+        {hint && <span className="text-[10px] text-surface-300 normal-case tracking-normal font-normal">{hint}</span>}
+      </label>
+      {children}
     </div>
   )
 }

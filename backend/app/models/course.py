@@ -30,6 +30,7 @@ class Course(Base):
 
     # Relationships
     user_courses = relationship("UserCourse", back_populates="course", cascade="all, delete-orphan")
+    library_documents = relationship("LibraryDocument", back_populates="course", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Course(code={self.code}, title={self.title}, credits={self.credits})>"
@@ -86,6 +87,7 @@ class UserCourse(Base):
 
     # Relationships
     course = relationship("Course", back_populates="user_courses")
+    semester = relationship("Semester", foreign_keys=[semester_id])
 
     def __repr__(self):
         return f"<UserCourse(user_id={self.user_id}, course_id={self.course_id}, predicted_gp={self.predicted_grade_point})>"

@@ -5,20 +5,26 @@ Uses Hugging Face DistilBERT for analyzing mood notes
 from transformers import pipeline
 from typing import Optional, Dict
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 # Initialize the sentiment analysis pipeline
 # Using distilbert-base-uncased-finetuned-sst-2-english as specified
-try:
-    sentiment_analyzer = pipeline(
-        "sentiment-analysis",
-        model="distilbert-base-uncased-finetuned-sst-2-english"
-    )
-    logger.info("✅ Sentiment analysis model loaded successfully")
-except Exception as e:
-    logger.error(f"❌ Failed to load sentiment analysis model: {e}")
-    sentiment_analyzer = None
+# Can be disabled with DISABLE_ML_MODELS=true for faster startup
+sentiment_analyzer = None
+if os.getenv("DISABLE_ML_MODELS", "").lower() != "true":
+    try:
+        sentiment_analyzer = pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english"
+        )
+        logger.info("Sentiment analysis model loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to load sentiment analysis model: {e}")
+        sentiment_analyzer = None
+else:
+    logger.info("Sentiment analysis disabled via DISABLE_ML_MODELS")
 
 
 def analyze_sentiment(text: str) -> Optional[Dict]:

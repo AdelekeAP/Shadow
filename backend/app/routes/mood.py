@@ -1,6 +1,7 @@
 """
 Mood Logging API Routes
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
@@ -15,6 +16,7 @@ from app.models.mood import MoodLog
 from app.routes.auth import get_current_user
 from app.services.sentiment_analysis import analyze_sentiment
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -40,7 +42,11 @@ class MoodLogResponse(BaseModel):
     logged_at: datetime
 
 
-@router.post("/log-mood")
+@router.post(
+    "/log-mood",
+    operation_id="log_mood",
+    summary="Log current mood and energy level",
+)
 def log_mood(
     mood_data: MoodLogCreate,
     current_user: User = Depends(get_current_user),
@@ -58,6 +64,10 @@ def log_mood(
                 detail=f"Invalid mood type. Must be one of: {', '.join(valid_moods)}"
             )
 
+        # Categorize moods as positive or negative for mismatch detection
+        positive_moods = ['focused', 'motivated', 'calm', 'confident']
+        negative_moods = ['tired', 'stressed', 'anxious', 'overwhelmed']
+
         # Analyze sentiment if note is provided
         sentiment_score = None
         sentiment_data = None
@@ -65,7 +75,7 @@ def log_mood(
             sentiment_data = analyze_sentiment(mood_data.note)
             if sentiment_data:
                 sentiment_score = sentiment_data['sentiment_score']
-                print(f"📊 Sentiment analysis: {sentiment_data}")
+                logger.debug("Sentiment analysis: %s", sentiment_data)
 
         # Create mood log
         mood_log = MoodLog(
@@ -96,17 +106,50 @@ def log_mood(
                 "label": sentiment_data['label']
             }
 
+            # Mismatch detection: compare mood selection with note sentiment
+            mood_type = mood_data.mood_type.lower()
+            mismatch_detected = False
+            mismatch_type = None
+            mismatch_message = None
+
+            # Check for mismatch only if sentiment has high confidence (>70%)
+            if sentiment_data['confidence'] > 0.7:
+                # Negative mood but positive note
+                if mood_type in negative_moods and sentiment_score == 1:
+                    mismatch_detected = True
+                    mismatch_type = "negative_mood_positive_note"
+                    mismatch_message = f"You selected '{mood_type}' but your note sounds positive. Are you perhaps feeling better than you thought?"
+
+                # Positive mood but negative note
+                elif mood_type in positive_moods and sentiment_score == -1:
+                    mismatch_detected = True
+                    mismatch_type = "positive_mood_negative_note"
+                    mismatch_message = f"You selected '{mood_type}' but your note suggests some concerns. Would you like to talk about what's on your mind?"
+
+            if mismatch_detected:
+                response["mismatch_detected"] = {
+                    "detected": True,
+                    "type": mismatch_type,
+                    "message": mismatch_message,
+                    "mood_category": "negative" if mood_type in negative_moods else "positive",
+                    "note_sentiment": sentiment_data['label']
+                }
+
         return response
 
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        print(f"Error logging mood: {e}")
+        logger.error("Error logging mood: %s", e)
         raise HTTPException(status_code=500, detail=f"Error logging mood: {str(e)}")
 
 
-@router.get("/moods")
+@router.get(
+    "/moods",
+    operation_id="get_mood_history",
+    summary="Get mood history for current user",
+)
 def get_mood_history(
     limit: int = 30,
     current_user: User = Depends(get_current_user),
@@ -128,11 +171,15 @@ def get_mood_history(
         }
 
     except Exception as e:
-        print(f"Error fetching mood history: {e}")
+        logger.error("Error fetching mood history: %s", e)
         raise HTTPException(status_code=500, detail=f"Error fetching mood history: {str(e)}")
 
 
-@router.get("/mood-trends")
+@router.get(
+    "/mood-trends",
+    operation_id="get_mood_trends",
+    summary="Get mood trends and analytics",
+)
 def get_mood_trends(
     days: int = 7,
     current_user: User = Depends(get_current_user),
@@ -217,11 +264,15 @@ def get_mood_trends(
         }
 
     except Exception as e:
-        print(f"Error calculating mood trends: {e}")
+        logger.error("Error calculating mood trends: %s", e)
         raise HTTPException(status_code=500, detail=f"Error calculating mood trends: {str(e)}")
 
 
-@router.get("/recent-energy")
+@router.get(
+    "/recent-energy",
+    operation_id="get_recent_energy",
+    summary="Get recent energy levels for priority calculation",
+)
 def get_recent_energy(
     limit: int = 5,
     current_user: User = Depends(get_current_user),
@@ -252,5 +303,5 @@ def get_recent_energy(
         }
 
     except Exception as e:
-        print(f"Error fetching recent energy: {e}")
+        logger.error("Error fetching recent energy: %s", e)
         raise HTTPException(status_code=500, detail=f"Error fetching recent energy: {str(e)}")
