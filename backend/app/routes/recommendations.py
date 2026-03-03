@@ -1,6 +1,7 @@
 """
 Recommendations Routes - API endpoints for smart task recommendations
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Dict
@@ -9,11 +10,15 @@ from app.utils.auth import get_current_user
 from app.utils.priority_calculator import PriorityCalculator
 from app.models.user import User
 
-
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 
 
-@router.get("/priority-tasks")
+@router.get(
+    "/priority-tasks",
+    operation_id="get_priority_tasks",
+    summary="Get top priority task recommendations",
+)
 def get_priority_tasks(
     limit: int = 5,
     current_user: User = Depends(get_current_user),
@@ -65,16 +70,18 @@ def get_priority_tasks(
         }
 
     except Exception as e:
-        import traceback
-        print(f"Recommendations Error: {str(e)}")
-        print(traceback.format_exc())
+        logger.error("Recommendations Error: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error getting recommendations: {str(e)}"
         )
 
 
-@router.get("/urgent")
+@router.get(
+    "/urgent",
+    operation_id="get_urgent_tasks",
+    summary="Get only urgent tasks due within 48 hours",
+)
 def get_urgent_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -111,7 +118,11 @@ def get_urgent_tasks(
         )
 
 
-@router.get("/goal-driven")
+@router.get(
+    "/goal-driven",
+    operation_id="get_goal_driven_tasks",
+    summary="Get tasks with high impact on CGPA target",
+)
 def get_goal_driven_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -149,7 +160,11 @@ def get_goal_driven_tasks(
         )
 
 
-@router.get("/recovery")
+@router.get(
+    "/recovery",
+    operation_id="get_recovery_tasks",
+    summary="Get recovery tasks for critical courses",
+)
 def get_recovery_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -186,7 +201,11 @@ def get_recovery_tasks(
         )
 
 
-@router.get("/summary")
+@router.get(
+    "/summary",
+    operation_id="get_recommendations_summary",
+    summary="Get a summary of recommendations without full task details",
+)
 def get_recommendations_summary(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

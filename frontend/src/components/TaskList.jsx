@@ -2,10 +2,9 @@ import { useState } from 'react'
 import { completeTask, deleteTask } from '../services/api'
 import EditTaskModal from './EditTaskModal'
 
-/**
- * TaskItem Component
- * Individual task card with completion and delete actions
- */
+/* ═══════════════════════════════════════
+   TaskItem — single row
+   ═══════════════════════════════════════ */
 const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
   const [isLoading, setIsLoading] = useState(false)
   const [showMarkInput, setShowMarkInput] = useState(false)
@@ -13,468 +12,394 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
   const [showEditMarks, setShowEditMarks] = useState(false)
 
   const handleComplete = async () => {
-    if (!showMarkInput) {
-      setShowMarkInput(true)
-      return
-    }
-
+    if (!showMarkInput) { setShowMarkInput(true); return }
     setIsLoading(true)
     try {
       const completionData = {}
-      if (earnedMarks) {
-        completionData.earned_marks = parseFloat(earnedMarks)
-      }
-
+      if (earnedMarks) completionData.earned_marks = parseFloat(earnedMarks)
       await completeTask(task.id, completionData)
-      onUpdate()
-      setShowMarkInput(false)
-      setEarnedMarks('')
-    } catch (error) {
-      console.error('Error completing task:', error)
-      alert(error.detail || 'Failed to complete task')
-    } finally {
-      setIsLoading(false)
-    }
+      onUpdate(); setShowMarkInput(false); setEarnedMarks('')
+    } catch (e) { console.error(e); alert(e.detail || 'Failed to complete task') }
+    finally { setIsLoading(false) }
   }
 
   const handleUncomplete = async () => {
-    if (!confirm('Mark this task as incomplete? This will remove completion status and earned marks.')) return
-
+    if (!confirm('Mark as incomplete? This removes completion status and earned marks.')) return
     setIsLoading(true)
     try {
       const { updateTask } = await import('../services/api')
-      await updateTask(task.id, {
-        is_completed: false,
-        completed_at: null,
-        earned_marks: null,
-        is_late: false
-      })
+      await updateTask(task.id, { is_completed: false, completed_at: null, earned_marks: null, is_late: false })
       onUpdate()
-    } catch (error) {
-      console.error('Error uncompleting task:', error)
-      alert(error.detail || 'Failed to uncomplete task')
-    } finally {
-      setIsLoading(false)
-    }
+    } catch (e) { console.error(e); alert(e.detail || 'Failed') }
+    finally { setIsLoading(false) }
   }
 
   const handleUpdateMarks = async () => {
     setIsLoading(true)
     try {
       const { updateTask } = await import('../services/api')
-      const updateData = {}
-      if (earnedMarks) {
-        updateData.earned_marks = parseFloat(earnedMarks)
-      }
-
-      await updateTask(task.id, updateData)
-      onUpdate()
-      setShowEditMarks(false)
-      setEarnedMarks('')
-    } catch (error) {
-      console.error('Error updating marks:', error)
-      alert(error.detail || 'Failed to update marks')
-    } finally {
-      setIsLoading(false)
-    }
+      if (earnedMarks) await updateTask(task.id, { earned_marks: parseFloat(earnedMarks) })
+      onUpdate(); setShowEditMarks(false); setEarnedMarks('')
+    } catch (e) { console.error(e); alert(e.detail || 'Failed') }
+    finally { setIsLoading(false) }
   }
 
   const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this task?')) return
-
+    if (!confirm('Delete this task?')) return
     setIsLoading(true)
-    try {
-      await deleteTask(task.id)
-      onDelete(task.id)
-    } catch (error) {
-      console.error('Error deleting task:', error)
-      alert(error.detail || 'Failed to delete task')
-    } finally {
-      setIsLoading(false)
-    }
+    try { await deleteTask(task.id); onDelete(task.id) }
+    catch (e) { console.error(e); alert(e.detail || 'Failed') }
+    finally { setIsLoading(false) }
   }
 
-  const getTaskTypeColor = () => {
-    const colors = {
-      test: 'bg-navy-100 text-navy-800',
-      project: 'bg-blue-100 text-blue-800',
-      assignment: 'bg-green-100 text-green-800',
-      exam: 'bg-red-100 text-red-800',
-      participation: 'bg-yellow-100 text-yellow-800',
-      quiz: 'bg-pink-100 text-pink-800',
-      presentation: 'bg-navy-100 text-navy-800',
-      other: 'bg-stone-100 text-stone-800'
-    }
-    return colors[task.task_type] || colors.other
+  /* helpers */
+  const typeColors = {
+    test: 'bg-navy-800/[0.06] text-navy-700',
+    project: 'bg-blue-500/[0.08] text-blue-600',
+    assignment: 'bg-emerald-500/[0.08] text-emerald-600',
+    exam: 'bg-red-500/[0.08] text-red-600',
+    participation: 'bg-amber-500/[0.08] text-amber-600',
+    quiz: 'bg-pink-500/[0.08] text-pink-600',
+    presentation: 'bg-violet-500/[0.08] text-violet-600',
+    other: 'bg-surface-100 text-surface-400',
   }
 
-  const formatDate = (dateString) => {
-    if (!dateString) return null
-    const date = new Date(dateString)
-    const today = new Date()
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-
-    if (date.toDateString() === today.toDateString()) return 'Today'
-    if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow'
-
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
-    })
+  const fmtDate = (d) => {
+    if (!d) return null
+    const date = new Date(d), now = new Date()
+    const tmrw = new Date(now); tmrw.setDate(tmrw.getDate() + 1)
+    if (date.toDateString() === now.toDateString()) return 'Today'
+    if (date.toDateString() === tmrw.toDateString()) return 'Tomorrow'
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(date.getFullYear() !== now.getFullYear() && { year: 'numeric' }) })
   }
 
   const isOverdue = task.due_date && !task.is_completed && new Date(task.due_date) < new Date()
-  const isDueSoon = task.due_date && !task.is_completed && new Date(task.due_date) <= new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+  const isDueSoon = task.due_date && !task.is_completed && new Date(task.due_date) <= new Date(Date.now() + 3 * 864e5)
 
   return (
     <div
       data-task-id={task.id}
-      className={`
-      relative bg-white rounded-xl p-4 transition-all duration-200
-      ${task.is_completed
-        ? 'bg-stone-50 border border-stone-200'
-        : 'border border-stone-200 shadow-sm hover:shadow-md hover:border-stone-300'
-      }
-      ${isOverdue ? 'border-l-4 border-l-red-500 bg-red-50/30' : ''}
-      ${task.is_urgent && !task.is_completed && !isOverdue ? 'border-l-4 border-l-amber-500 bg-amber-50/30' : ''}
-    `}>
-      <div className="flex items-start justify-between">
-        {/* Left side - Task info */}
-        <div className="flex items-start space-x-3 flex-1">
-          {/* Checkbox */}
-          <button
-            onClick={task.is_completed ? handleUncomplete : handleComplete}
-            disabled={isLoading}
-            className={`
-              mt-0.5 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200
-              ${task.is_completed
-                ? 'bg-green-500 border-green-500 hover:bg-green-600 shadow-sm'
-                : 'border-stone-300 hover:border-navy-500 hover:bg-navy-50'
-              }
-              ${isLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-            `}
-            title={task.is_completed ? 'Click to mark as incomplete' : 'Click to complete'}
-          >
-            {task.is_completed && (
-              <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-          </button>
+      className={`group relative transition-all duration-200 rounded-xl ${
+        task.is_completed
+          ? 'opacity-60 hover:opacity-80'
+          : 'hover:bg-surface-50'
+      } ${isOverdue ? 'bg-red-500/[0.03]' : ''}`}
+    >
+      <div className="flex items-start gap-3 px-3 py-3">
+        {/* Checkbox */}
+        <button
+          onClick={task.is_completed ? handleUncomplete : handleComplete}
+          disabled={isLoading}
+          className={`mt-0.5 flex-shrink-0 w-[18px] h-[18px] rounded-md border-[1.5px] flex items-center justify-center transition-all duration-200 ${
+            task.is_completed
+              ? 'bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-200'
+              : `border-surface-300 hover:border-navy-400 hover:bg-navy-50 ${isOverdue ? 'border-red-300' : ''}`
+          } ${isLoading ? 'opacity-40' : 'cursor-pointer'}`}
+        >
+          {task.is_completed && (
+            <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </button>
 
-          {/* Task details */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-              <h4 className={`font-semibold text-stone-900 ${task.is_completed ? 'line-through text-stone-500' : ''}`}>
-                {task.title}
-              </h4>
-              {task.course_code && (
-                <span
-                  className="px-2 py-0.5 text-xs font-medium rounded-full bg-navy-100 text-navy-800 cursor-help"
-                  title={task.course_title || task.course_code}
-                >
-                  {task.course_code}
-                </span>
-              )}
-              <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getTaskTypeColor()}`}>
-                {task.task_type}
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          {/* Title + actions row */}
+          <div className="flex items-start justify-between gap-2">
+            <h4 className={`text-[13px] font-semibold leading-snug transition-all ${
+              task.is_completed ? 'line-through text-surface-300' : 'text-navy-900'
+            }`}>
+              {task.title}
+            </h4>
+
+            {/* Hover actions */}
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex-shrink-0">
+              <button
+                onClick={() => onEdit(task)}
+                disabled={isLoading}
+                className="p-1 rounded-md text-surface-300 hover:text-navy-700 hover:bg-surface-100 transition-colors"
+                title="Edit"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                </svg>
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={isLoading}
+                className="p-1 rounded-md text-surface-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                title="Delete"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Meta line */}
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {task.course_code && (
+              <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-navy-800/[0.06] text-navy-700">
+                {task.course_code}
               </span>
-              {task.category === 'CA' && (
-                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-700">
-                  CA
+            )}
+            <span className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${typeColors[task.task_type] || typeColors.other}`}>
+              {task.task_type}
+            </span>
+            {task.category === 'CA' && (
+              <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-500/[0.08] text-blue-600">CA</span>
+            )}
+            <span className="text-surface-300 text-[10px]">·</span>
+            <span className="text-[11px] text-surface-400 font-medium">{task.weight}mk</span>
+
+            {task.is_completed && task.earned_marks !== null && (
+              <>
+                <span className="text-surface-300 text-[10px]">·</span>
+                <span className="text-[11px] text-emerald-600 font-semibold">
+                  {task.earned_marks}/{task.max_marks}
                 </span>
-              )}
-            </div>
-
-            {task.description && (
-              <p className="text-sm text-stone-600 mb-2">{task.description}</p>
-            )}
-
-            <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500">
-              {/* Weight */}
-              <div className="flex items-center">
-                <span className="font-medium text-stone-700">{task.weight} marks</span>
-                {task.is_completed && task.earned_marks !== null && (
-                  <>
-                    <span className="ml-1 text-green-600 font-medium">
-                      ({task.earned_marks}/{task.max_marks})
-                    </span>
-                    <button
-                      onClick={() => {
-                        setEarnedMarks(task.earned_marks.toString())
-                        setShowEditMarks(true)
-                      }}
-                      className="ml-1 text-stone-400 hover:text-navy-800 transition-colors"
-                      title="Edit earned marks"
-                    >
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Due date */}
-              {task.due_date && (
-                <div className={`flex items-center ${isOverdue ? 'text-red-600 font-medium' : isDueSoon ? 'text-yellow-600 font-medium' : ''}`}>
-                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                <button
+                  onClick={() => { setEarnedMarks(task.earned_marks.toString()); setShowEditMarks(true) }}
+                  className="text-surface-300 hover:text-navy-600 transition-colors"
+                  title="Edit marks"
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
                   </svg>
-                  {formatDate(task.due_date)}
-                  {isOverdue && ' (Overdue)'}
-                </div>
-              )}
-
-              {/* Priority score */}
-              {task.priority_score && (
-                <div className="flex items-center">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    task.priority_score >= 70 ? 'bg-red-100 text-red-700' :
-                    task.priority_score >= 50 ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-green-100 text-green-700'
-                  }`}>
-                    Priority: {Math.round(task.priority_score)}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Mark input (when completing) */}
-            {showMarkInput && !task.is_completed && (
-              <div className="mt-3 flex items-center space-x-2">
-                <input
-                  type="number"
-                  min="0"
-                  max={task.max_marks}
-                  step="0.5"
-                  value={earnedMarks}
-                  onChange={(e) => setEarnedMarks(e.target.value)}
-                  placeholder={`Marks earned (max ${task.max_marks})`}
-                  className="px-3 py-1 border border-stone-300 rounded text-sm focus:ring-2 focus:ring-navy-500 focus:border-navy-500"
-                  autoFocus
-                />
-                <button
-                  onClick={handleComplete}
-                  disabled={isLoading}
-                  className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
-                >
-                  {isLoading ? 'Saving...' : 'Save'}
                 </button>
-                <button
-                  onClick={() => setShowMarkInput(false)}
-                  className="px-3 py-1 bg-stone-200 text-stone-700 text-sm rounded hover:bg-stone-300"
-                >
-                  Cancel
-                </button>
-              </div>
+              </>
             )}
 
-            {/* Edit marks (when task is completed) */}
-            {showEditMarks && task.is_completed && (
-              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs text-blue-700 mb-2">Edit earned marks for this completed task</p>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="number"
-                    min="0"
-                    max={task.max_marks}
-                    step="0.5"
-                    value={earnedMarks}
-                    onChange={(e) => setEarnedMarks(e.target.value)}
-                    placeholder={`Marks earned (max ${task.max_marks})`}
-                    className="px-3 py-1 border border-stone-300 rounded text-sm focus:ring-2 focus:ring-navy-500 focus:border-navy-500"
-                    autoFocus
-                  />
-                  <button
-                    onClick={handleUpdateMarks}
-                    disabled={isLoading}
-                    className="px-3 py-1 bg-navy-800 text-white text-sm rounded hover:bg-navy-900 disabled:opacity-50"
-                  >
-                    {isLoading ? 'Updating...' : 'Update'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowEditMarks(false)
-                      setEarnedMarks('')
-                    }}
-                    className="px-3 py-1 bg-stone-200 text-stone-700 text-sm rounded hover:bg-stone-300"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
+            {task.due_date && (
+              <>
+                <span className="text-surface-300 text-[10px]">·</span>
+                <span className={`text-[11px] flex items-center gap-1 ${
+                  isOverdue ? 'text-red-500 font-semibold' : isDueSoon ? 'text-amber-500 font-medium' : 'text-surface-400'
+                }`}>
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+                  </svg>
+                  {fmtDate(task.due_date)}{isOverdue && ' (overdue)'}
+                </span>
+              </>
+            )}
+
+            {task.priority_score && !task.is_completed && (
+              <>
+                <span className="text-surface-300 text-[10px]">·</span>
+                <span className={`font-mono text-[10px] font-semibold px-1 py-0.5 rounded ${
+                  task.priority_score >= 70 ? 'bg-red-500/[0.08] text-red-500' :
+                  task.priority_score >= 50 ? 'bg-amber-500/[0.08] text-amber-500' :
+                  'bg-surface-100 text-surface-400'
+                }`}>
+                  P{Math.round(task.priority_score)}
+                </span>
+              </>
             )}
           </div>
-        </div>
 
-        {/* Right side - Action buttons */}
-        <div className="flex items-center space-x-1 ml-2">
-          {/* Edit button */}
-          <button
-            onClick={() => onEdit(task)}
-            disabled={isLoading}
-            className="p-1 text-stone-400 hover:text-navy-800 transition-colors"
-            title="Edit task"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </button>
+          {task.description && (
+            <p className="text-[12px] text-surface-400 mt-1 line-clamp-1">{task.description}</p>
+          )}
 
-          {/* Delete button */}
-          <button
-            onClick={handleDelete}
-            disabled={isLoading}
-            className="p-1 text-stone-400 hover:text-red-600 transition-colors"
-            title="Delete task"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-          </button>
+          {/* Mark input (completing) */}
+          {showMarkInput && !task.is_completed && (
+            <div className="mt-2.5 flex items-center gap-2 p-2 rounded-lg bg-surface-50 border border-surface-200">
+              <input
+                type="number" min="0" max={task.max_marks} step="0.5"
+                value={earnedMarks}
+                onChange={(e) => setEarnedMarks(e.target.value)}
+                placeholder={`Marks (max ${task.max_marks})`}
+                className="w-32 px-2.5 py-1 text-[12px] border border-surface-200 rounded-lg bg-white focus:ring-2 focus:ring-navy-500/20 focus:border-navy-400 outline-none transition-all"
+                autoFocus
+              />
+              <button
+                onClick={handleComplete}
+                disabled={isLoading}
+                className="px-2.5 py-1 bg-emerald-500 text-white text-[11px] font-semibold rounded-lg hover:bg-emerald-600 disabled:opacity-40 transition-colors"
+              >
+                {isLoading ? 'Saving...' : 'Done'}
+              </button>
+              <button
+                onClick={() => setShowMarkInput(false)}
+                className="px-2.5 py-1 text-[11px] font-medium text-surface-400 hover:text-navy-800 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Edit marks (completed task) */}
+          {showEditMarks && task.is_completed && (
+            <div className="mt-2.5 flex items-center gap-2 p-2 rounded-lg bg-blue-50/50 border border-blue-100">
+              <span className="text-[11px] text-blue-600 font-medium">Edit marks:</span>
+              <input
+                type="number" min="0" max={task.max_marks} step="0.5"
+                value={earnedMarks}
+                onChange={(e) => setEarnedMarks(e.target.value)}
+                className="w-24 px-2.5 py-1 text-[12px] border border-blue-200 rounded-lg bg-white focus:ring-2 focus:ring-navy-500/20 focus:border-navy-400 outline-none transition-all"
+                autoFocus
+              />
+              <button
+                onClick={handleUpdateMarks}
+                disabled={isLoading}
+                className="px-2.5 py-1 bg-navy-800 text-white text-[11px] font-semibold rounded-lg hover:bg-navy-900 disabled:opacity-40 transition-colors"
+              >
+                {isLoading ? '...' : 'Save'}
+              </button>
+              <button
+                onClick={() => { setShowEditMarks(false); setEarnedMarks('') }}
+                className="px-2.5 py-1 text-[11px] font-medium text-surface-400 hover:text-navy-800 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Urgency accent line */}
+      {isOverdue && !task.is_completed && (
+        <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-red-400" />
+      )}
+      {task.is_urgent && !task.is_completed && !isOverdue && (
+        <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-amber-400" />
+      )}
     </div>
   )
 }
 
-/**
- * TaskList Component
- * Displays a list of tasks with filtering and grouping options
- */
+/* ═══════════════════════════════════════
+   TaskList — main list with filters
+   ═══════════════════════════════════════ */
 const TaskList = ({ tasks, onUpdate, showCompleted = true, groupByCourse = false, enrolledCourses = [] }) => {
-  const [filter, setFilter] = useState('all') // all, pending, completed, urgent
+  const [filter, setFilter] = useState('all')
   const [editingTask, setEditingTask] = useState(null)
 
-  const isTaskOverdue = (task) => task.due_date && !task.is_completed && new Date(task.due_date) < new Date()
+  const isOverdue = (t) => t.due_date && !t.is_completed && new Date(t.due_date) < new Date()
 
-  const filteredTasks = tasks.filter(task => {
-    if (filter === 'pending') return !task.is_completed
-    if (filter === 'completed') return task.is_completed
-    if (filter === 'urgent') return (task.is_urgent || isTaskOverdue(task)) && !task.is_completed
-    return showCompleted || !task.is_completed
+  const filtered = tasks.filter(t => {
+    if (filter === 'pending') return !t.is_completed
+    if (filter === 'completed') return t.is_completed
+    if (filter === 'urgent') return (t.is_urgent || isOverdue(t)) && !t.is_completed
+    return showCompleted || !t.is_completed
   })
 
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
-    // Completed tasks go to bottom
-    if (a.is_completed !== b.is_completed) {
-      return a.is_completed ? 1 : -1
-    }
-    // Then sort by priority (high to low)
-    if (b.priority_score !== a.priority_score) {
-      return (b.priority_score || 0) - (a.priority_score || 0)
-    }
-    // Then by due date (earliest first)
-    if (a.due_date && b.due_date) {
-      return new Date(a.due_date) - new Date(b.due_date)
-    }
+  const sorted = [...filtered].sort((a, b) => {
+    if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1
+    if (b.priority_score !== a.priority_score) return (b.priority_score || 0) - (a.priority_score || 0)
+    if (a.due_date && b.due_date) return new Date(a.due_date) - new Date(b.due_date)
     return 0
   })
 
-  const handleTaskDelete = (taskId) => {
-    onUpdate() // Refresh the task list
+  const counts = {
+    all: tasks.length,
+    pending: tasks.filter(t => !t.is_completed).length,
+    urgent: tasks.filter(t => (t.is_urgent || isOverdue(t)) && !t.is_completed).length,
+    completed: tasks.filter(t => t.is_completed).length,
   }
 
-  const handleTaskEdit = (task) => {
-    setEditingTask(task)
-  }
-
-  const handleCloseEditModal = () => {
-    setEditingTask(null)
-  }
-
-  const handleTaskUpdated = () => {
-    setEditingTask(null)
-    onUpdate() // Refresh the task list
-  }
-
-  if (tasks.length === 0) {
-    return (
-      <div className="text-center py-12 bg-stone-50 rounded-lg">
-        <svg className="mx-auto h-12 w-12 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+  /* empty state */
+  if (!tasks.length) return (
+    <div className="py-12 text-center">
+      <div className="w-12 h-12 rounded-2xl bg-surface-100 flex items-center justify-center mx-auto mb-3">
+        <svg className="w-6 h-6 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z" />
         </svg>
-        <h3 className="mt-2 text-sm font-medium text-stone-900">No tasks</h3>
-        <p className="mt-1 text-sm text-stone-500">Get started by creating a new task</p>
       </div>
-    )
-  }
+      <p className="text-[14px] font-semibold text-navy-900">No tasks yet</p>
+      <p className="text-[12px] text-surface-400 mt-0.5">Create a task to get started</p>
+    </div>
+  )
+
+  const filters = [
+    { key: 'all', label: 'All' },
+    { key: 'pending', label: 'Pending' },
+    { key: 'urgent', label: 'Urgent' },
+    { key: 'completed', label: 'Done' },
+  ]
 
   return (
     <div>
       {/* Filter tabs */}
-      <div className="flex gap-1 mb-5 p-1 bg-stone-100 rounded-lg w-fit">
-        {[
-          { key: 'all', label: 'All' },
-          { key: 'pending', label: 'Pending' },
-          { key: 'urgent', label: 'Urgent' },
-          { key: 'completed', label: 'Done' }
-        ].map(({ key, label }) => (
+      <div className="flex items-center gap-0.5 mb-4 p-0.5 bg-surface-100/80 rounded-lg w-fit">
+        {filters.map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setFilter(key)}
-            className={`
-              px-4 py-2 text-sm font-medium rounded-md transition-all duration-200
-              ${filter === key
+            className={`relative px-3 py-1.5 text-[12px] font-semibold rounded-md transition-all duration-200 ${
+              filter === key
                 ? 'bg-white text-navy-800 shadow-sm'
-                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-50'
-              }
-            `}
+                : 'text-surface-400 hover:text-navy-700'
+            }`}
           >
             {label}
-            {key === 'pending' && tasks.filter(t => !t.is_completed).length > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-navy-100 text-navy-700">
-                {tasks.filter(t => !t.is_completed).length}
-              </span>
-            )}
-            {key === 'urgent' && tasks.filter(t => (t.is_urgent || isTaskOverdue(t)) && !t.is_completed).length > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-red-100 text-red-700">
-                {tasks.filter(t => (t.is_urgent || isTaskOverdue(t)) && !t.is_completed).length}
+            {counts[key] > 0 && key !== 'all' && (
+              <span className={`ml-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 text-[10px] font-bold rounded-full ${
+                filter === key
+                  ? key === 'urgent' ? 'bg-red-100 text-red-600' : 'bg-navy-100 text-navy-700'
+                  : key === 'urgent' ? 'bg-red-100 text-red-500' : 'bg-surface-200/80 text-surface-400'
+              }`}>
+                {counts[key]}
               </span>
             )}
           </button>
         ))}
       </div>
 
-      {/* Task list */}
-      <div className="space-y-3">
-        {sortedTasks.length === 0 ? (
-          <p className="text-center text-stone-500 py-8">No tasks match this filter</p>
+      {/* Task rows */}
+      <div className="space-y-0.5">
+        {sorted.length === 0 ? (
+          <p className="text-center text-[13px] text-surface-400 py-8">No tasks match this filter</p>
         ) : (
-          sortedTasks.map(task => (
+          sorted.map(task => (
             <TaskItem
               key={task.id}
               task={task}
               onUpdate={onUpdate}
-              onDelete={handleTaskDelete}
-              onEdit={handleTaskEdit}
+              onDelete={() => onUpdate()}
+              onEdit={(t) => setEditingTask(t)}
             />
           ))
         )}
       </div>
 
-      {/* Summary */}
-      {sortedTasks.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-stone-200">
-          <div className="flex justify-between text-sm text-stone-600">
+      {/* Footer summary */}
+      {sorted.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-surface-100 flex items-center justify-between">
+          <div className="flex items-center gap-4 text-[11px] text-surface-400">
             <span>
-              {tasks.filter(t => t.is_completed).length} of {tasks.length} tasks completed
+              <span className="font-semibold text-navy-800">{counts.completed}</span> of {counts.all} done
             </span>
+            <span className="text-surface-200">|</span>
             <span>
-              {tasks.filter(t => !t.is_completed && t.category === 'CA').reduce((sum, t) => sum + (t.weight || 0), 0).toFixed(1)} CA marks remaining
+              <span className="font-semibold text-navy-800">
+                {tasks.filter(t => !t.is_completed && t.category === 'CA').reduce((s, t) => s + (t.weight || 0), 0).toFixed(1)}
+              </span> CA marks remaining
+            </span>
+          </div>
+          {/* Mini completion bar */}
+          <div className="flex items-center gap-2">
+            <div className="w-20 h-1.5 bg-surface-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-navy-700 to-navy-500 rounded-full transition-all duration-500"
+                style={{ width: `${counts.all > 0 ? (counts.completed / counts.all) * 100 : 0}%` }}
+              />
+            </div>
+            <span className="font-mono text-[10px] font-semibold text-surface-400">
+              {counts.all > 0 ? Math.round((counts.completed / counts.all) * 100) : 0}%
             </span>
           </div>
         </div>
       )}
 
-      {/* Edit Task Modal */}
+      {/* Edit Modal */}
       <EditTaskModal
         isOpen={editingTask !== null}
-        onClose={handleCloseEditModal}
-        onTaskUpdated={handleTaskUpdated}
+        onClose={() => setEditingTask(null)}
+        onTaskUpdated={() => { setEditingTask(null); onUpdate() }}
         task={editingTask}
         enrolledCourses={enrolledCourses}
       />

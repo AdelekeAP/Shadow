@@ -1,12 +1,15 @@
 """
 Priority Calculator - Smart task prioritization based on multiple factors
 """
+import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from app.models.task import Task
 from app.models.user import User
 from app.models.course import UserCourse
+
+logger = logging.getLogger(__name__)
 
 
 class PriorityCalculator:
@@ -187,7 +190,7 @@ class PriorityCalculator:
             return min(10.0, gap_score * (1 + weight_multiplier))
 
         except Exception as e:
-            print(f"Error calculating goal impact: {e}")
+            logger.error("Error calculating goal impact: %s", e)
             return 5.0  # Neutral on error
 
     @staticmethod

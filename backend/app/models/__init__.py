@@ -12,8 +12,21 @@ from app.models.smartstudy import (
     StudyPlanResource,
     UploadedDocument,
     InterventionOutcome,
-    ContentQualityScore
+    ContentQualityScore,
+    VideoNote
 )
+from app.models.quiz import Quiz, QuizAttempt
+from app.models.library import LibraryDocument, LibraryVote
+from app.models.content_curation import CuratedResource, ContentCurationQuery
+from app.models.notification import (
+    Notification,
+    NotificationPreference,
+    ScheduledReminder,
+    NotificationType,
+    NotificationPriority,
+    DeliveryChannel
+)
+from app.models.usage_log import UsageLog
 
 __all__ = [
     "User",
@@ -28,5 +41,19 @@ __all__ = [
     "StudyPlanResource",
     "UploadedDocument",
     "InterventionOutcome",
-    "ContentQualityScore"
+    "ContentQualityScore",
+    "VideoNote",
+    "LibraryDocument",
+    "LibraryVote",
+    "CuratedResource",
+    "ContentCurationQuery",
+    "Notification",
+    "NotificationPreference",
+    "ScheduledReminder",
+    "NotificationType",
+    "NotificationPriority",
+    "DeliveryChannel",
+    "UsageLog",
+    "Quiz",
+    "QuizAttempt"
 ]

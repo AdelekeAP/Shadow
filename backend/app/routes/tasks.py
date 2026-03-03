@@ -99,7 +99,13 @@ def update_course_grades(user_course: UserCourse, db: Session):
     db.commit()
 
 
-@router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=TaskResponse,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_task",
+    summary="Create a new academic task",
+)
 async def create_task(
     task_data: TaskCreate,
     db: Session = Depends(get_db),
@@ -218,7 +224,12 @@ async def create_task(
     return TaskResponse(**new_task.to_dict())
 
 
-@router.get("/", response_model=List[TaskWithCourse])
+@router.get(
+    "/",
+    response_model=List[TaskWithCourse],
+    operation_id="list_tasks",
+    summary="List tasks with optional filters",
+)
 async def get_user_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_user_from_token),
@@ -279,7 +290,12 @@ async def get_user_tasks(
     return tasks_with_course
 
 
-@router.get("/stats", response_model=TaskStats)
+@router.get(
+    "/stats",
+    response_model=TaskStats,
+    operation_id="get_task_stats",
+    summary="Get task completion statistics",
+)
 async def get_task_statistics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_user_from_token)
@@ -339,7 +355,12 @@ async def get_task_statistics(
     )
 
 
-@router.get("/by-course", response_model=List[CourseTaskSummary])
+@router.get(
+    "/by-course",
+    response_model=List[CourseTaskSummary],
+    operation_id="get_tasks_by_course",
+    summary="Get tasks grouped by course",
+)
 async def get_tasks_by_course(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_user_from_token)
@@ -394,7 +415,12 @@ async def get_tasks_by_course(
     return summaries
 
 
-@router.get("/{task_id}", response_model=TaskResponse)
+@router.get(
+    "/{task_id}",
+    response_model=TaskResponse,
+    operation_id="get_task",
+    summary="Get task details by ID",
+)
 async def get_task(
     task_id: str,
     db: Session = Depends(get_db),
@@ -433,7 +459,12 @@ async def get_task(
     return TaskResponse(**task.to_dict())
 
 
-@router.patch("/{task_id}", response_model=TaskResponse)
+@router.patch(
+    "/{task_id}",
+    response_model=TaskResponse,
+    operation_id="update_task",
+    summary="Update a task",
+)
 async def update_task(
     task_id: str,
     task_update: TaskUpdate,
@@ -517,7 +548,12 @@ async def update_task(
     return TaskResponse(**task.to_dict())
 
 
-@router.patch("/{task_id}/complete", response_model=TaskResponse)
+@router.patch(
+    "/{task_id}/complete",
+    response_model=TaskResponse,
+    operation_id="complete_task",
+    summary="Mark a task as complete",
+)
 async def mark_task_complete(
     task_id: str,
     completion_data: TaskComplete,
@@ -621,7 +657,12 @@ async def mark_task_complete(
     return TaskResponse(**task.to_dict())
 
 
-@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="delete_task",
+    summary="Delete a task",
+)
 async def delete_task(
     task_id: str,
     db: Session = Depends(get_db),

@@ -1,7 +1,7 @@
 """
 Authentication Routes - Register, Login, Get Current User
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -15,25 +15,72 @@ from app.utils.auth import (
     create_access_token,
     decode_access_token
 )
+from app.middleware.rate_limiter import limiter
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 
-@router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, db: Session = Depends(get_db)):
+@router.post(
+    "/register",
+    response_model=Token,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="register_user",
+    summary="Register a new student account",
+    response_description="JWT access token and the newly created user profile.",
+    responses={
+        201: {
+            "description": "Account created successfully. Returns a JWT token and user profile.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                        "token_type": "bearer",
+                        "user": {
+                            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                            "email": "student@pau.edu.ng",
+                            "full_name": "Jane Doe",
+                            "university_id": "PAU/2022/001",
+                            "entry_level": "400L",
+                            "gpa_scale": 5.0,
+                            "target_cgpa": 4.5,
+                            "current_cgpa": 3.8,
+                            "total_credits_completed": 0,
+                            "created_at": "2026-02-21T10:30:00",
+                            "last_login": None,
+                            "is_active": True
+                        }
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "Email already registered.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Email already registered"}
+                }
+            },
+        },
+        422: {
+            "description": "Validation error (e.g., password too short, invalid email format, invalid entry level).",
+        },
+    },
+)
+@limiter.limit("5/minute")
+async def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
     """
-    Register a new user
+    Register a new PAU student account.
 
-    Args:
-        user_data: User registration data
-        db: Database session
+    Creates a new user with the provided profile information and returns a JWT
+    access token that can be used immediately for authenticated requests.
 
-    Returns:
-        Access token and user data
+    **Rate limit:** 5 requests per minute per client IP.
 
-    Raises:
-        HTTPException: If email already exists
+    **PAU-specific fields:**
+    - `entry_level`: One of `100L`, `200L`, `200L-DE`, `300L`, `400L`
+    - `gpa_scale`: Automatically set to 5.0 (PAU standard)
+    - `target_cgpa` / `current_cgpa`: Must be between 0.0 and 5.0
     """
     # Check if user already exists
     existing_user = db.query(User).filter(User.email == user_data.email).first()
@@ -80,20 +127,70 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/login", response_model=Token)
-async def login(credentials: UserLogin, db: Session = Depends(get_db)):
+@router.post(
+    "/login",
+    response_model=Token,
+    operation_id="login_user",
+    summary="Authenticate and obtain a JWT token",
+    response_description="JWT access token and the authenticated user profile.",
+    responses={
+        200: {
+            "description": "Login successful. Returns a JWT token and user profile.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                        "token_type": "bearer",
+                        "user": {
+                            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                            "email": "student@pau.edu.ng",
+                            "full_name": "Jane Doe",
+                            "university_id": "PAU/2022/001",
+                            "entry_level": "400L",
+                            "gpa_scale": 5.0,
+                            "target_cgpa": 4.5,
+                            "current_cgpa": 3.8,
+                            "total_credits_completed": 45,
+                            "created_at": "2026-01-15T08:00:00",
+                            "last_login": "2026-02-21T10:30:00",
+                            "is_active": True
+                        }
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Invalid email or password.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Incorrect email or password"}
+                }
+            },
+        },
+        403: {
+            "description": "User account is inactive.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "User account is inactive"}
+                }
+            },
+        },
+    },
+)
+@limiter.limit("5/minute")
+async def login(request: Request, credentials: UserLogin, db: Session = Depends(get_db)):
     """
-    Login user
+    Authenticate a student with email and password.
 
-    Args:
-        credentials: Email and password
-        db: Database session
+    On success, returns a JWT access token (valid for 24 hours) and the full
+    user profile. The `last_login` timestamp is updated on every successful login.
 
-    Returns:
-        Access token and user data
+    **Rate limit:** 5 requests per minute per client IP.
 
-    Raises:
-        HTTPException: If credentials are invalid
+    Include the returned token in subsequent requests:
+    ```
+    Authorization: Bearer <access_token>
+    ```
     """
     # Find user by email
     user = db.query(User).filter(User.email == credentials.email).first()
@@ -176,24 +273,94 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     return user
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    operation_id="get_current_user_profile",
+    summary="Get the authenticated user's profile",
+    response_description="Full profile of the currently authenticated user.",
+    responses={
+        200: {
+            "description": "User profile retrieved successfully.",
+        },
+        401: {
+            "description": "Missing or invalid JWT token.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+    },
+)
 async def get_me(current_user: User = Depends(get_current_user)):
     """
-    Get current user profile
+    Retrieve the full profile of the currently authenticated user.
 
-    Args:
-        current_user: Current authenticated user
-
-    Returns:
-        User profile data
+    Requires a valid JWT Bearer token in the `Authorization` header. Returns
+    all profile fields including academic information (CGPA, credits, entry level)
+    and account metadata.
     """
-    return UserResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        university_id=current_user.university_id,
-        entry_level=current_user.entry_level,
-        target_cgpa=current_user.target_cgpa,
-        current_cgpa=current_user.current_cgpa,
-        gpa_scale=current_user.gpa_scale
-    )
+    return UserResponse(**current_user.to_dict())
+
+
+@router.patch(
+    "/me/preferences",
+    operation_id="update_user_preferences",
+    summary="Update learning preferences and academic targets",
+    response_description="Confirmation message with updated preference values.",
+    responses={
+        200: {
+            "description": "Preferences updated successfully.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Preferences updated successfully",
+                        "learning_style": "visual",
+                        "target_cgpa": 4.5
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Missing or invalid JWT token.",
+        },
+    },
+)
+async def update_preferences(
+    preferences: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update the authenticated user's learning preferences and academic targets.
+
+    Accepts a JSON object with any of the following keys:
+
+    - `preferred_learning_style` or `learning_style`: One of `visual`, `auditory`,
+      `reading`, `kinesthetic`
+    - `target_cgpa`: Desired cumulative GPA on the 5.0 scale
+
+    Only recognized fields are persisted; unknown keys are silently ignored.
+    """
+    # Map frontend field names to model field names
+    field_mapping = {
+        'preferred_learning_style': 'learning_style',
+        'learning_style': 'learning_style',
+        'target_cgpa': 'target_cgpa'
+    }
+
+    # Update allowed fields
+    for field, value in preferences.items():
+        model_field = field_mapping.get(field)
+        if model_field:
+            setattr(current_user, model_field, value)
+
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "message": "Preferences updated successfully",
+        "learning_style": current_user.learning_style,
+        "target_cgpa": float(current_user.target_cgpa) if current_user.target_cgpa else None
+    }

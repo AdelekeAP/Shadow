@@ -104,6 +104,10 @@ class StudyPlan(Base):
     after_score = Column(Numeric(5, 2), nullable=True)  # Performance after intervention
     effectiveness_score = Column(Numeric(5, 2), nullable=True)  # Calculated improvement
 
+    # Learning style tracking (Phase 2 Week 2)
+    learning_style_used = Column(String(50), nullable=True)  # 'visual', 'audio', 'reading', 'kinesthetic'
+    completed_days = Column(JSONB, nullable=True, default=[])  # Array of completed day numbers
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -131,6 +135,8 @@ class StudyPlan(Base):
             "before_score": float(self.before_score) if self.before_score else None,
             "after_score": float(self.after_score) if self.after_score else None,
             "effectiveness_score": float(self.effectiveness_score) if self.effectiveness_score else None,
+            "learning_style_used": self.learning_style_used,
+            "completed_days": self.completed_days if self.completed_days else [],
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
@@ -160,6 +166,15 @@ class StudyPlanResource(Base):
     day_number = Column(Integer, nullable=True)  # Which day in the plan
     order_in_day = Column(Integer, nullable=True)  # Order within day
 
+    # Report tracking (Phase A)
+    report_reason = Column(String(50), nullable=True)  # broken_link, irrelevant, outdated
+    reported_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Audio summary (Phase B)
+    audio_file_path = Column(String(500), nullable=True)
+    audio_script = Column(Text, nullable=True)
+    audio_generated_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     def __repr__(self):
@@ -180,6 +195,10 @@ class StudyPlanResource(Base):
             "helpful_rating": self.helpful_rating,
             "day_number": self.day_number,
             "order_in_day": self.order_in_day,
+            "report_reason": self.report_reason,
+            "reported_at": self.reported_at.isoformat() if self.reported_at else None,
+            "has_audio": self.audio_file_path is not None,
+            "audio_url": f"/api/v1/smartstudy/audio/{self.audio_file_path}" if self.audio_file_path else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -318,3 +337,57 @@ class ContentQualityScore(Base):
             "quality_score": float(self.quality_score) if self.quality_score else None,
             "last_updated": self.last_updated.isoformat() if self.last_updated else None,
         }
+
+
+class VideoNote(Base):
+    """
+    Video Note - Notes taken while watching videos in study plans
+    Supports timestamped notes and highlights for video learning
+    """
+    __tablename__ = "video_notes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    resource_id = Column(UUID(as_uuid=True), ForeignKey('study_plan_resources.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    # Note content
+    content = Column(Text, nullable=False)
+
+    # Video timestamp (in seconds) - optional
+    timestamp_seconds = Column(Integer, nullable=True)
+
+    # Note type for organization
+    note_type = Column(String(50), default='note')  # 'note', 'highlight', 'question', 'summary'
+
+    # Color coding for visual organization
+    color = Column(String(20), default='yellow')  # 'yellow', 'green', 'blue', 'pink', 'orange'
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<VideoNote(id={self.id}, timestamp={self.timestamp_seconds})>"
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "user_id": str(self.user_id),
+            "resource_id": str(self.resource_id),
+            "content": self.content,
+            "timestamp_seconds": self.timestamp_seconds,
+            "note_type": self.note_type,
+            "color": self.color,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def format_timestamp(self):
+        """Format timestamp as MM:SS or HH:MM:SS"""
+        if self.timestamp_seconds is None:
+            return None
+        hours = self.timestamp_seconds // 3600
+        minutes = (self.timestamp_seconds % 3600) // 60
+        seconds = self.timestamp_seconds % 60
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes}:{seconds:02d}"

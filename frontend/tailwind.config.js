@@ -7,34 +7,41 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Navy color scale (replaces indigo - more academic/professional)
         navy: {
-          50: '#F0F4FF',
-          100: '#E0E9FF',
-          200: '#C7D7FE',
-          300: '#A5BBFE',
-          400: '#8199FC',
-          500: '#6172F3',
-          600: '#4F46E5',
-          700: '#3E38D8',
-          800: '#1E3A8A',  // Primary
+          50: '#f0f4ff',
+          100: '#e0e9ff',
+          200: '#c7d7fe',
+          300: '#a5bbfe',
+          400: '#8199fc',
+          500: '#6172f3',
+          600: '#4f46e5',
+          700: '#3e38d8',
+          800: '#1e3a8a',
           900: '#172554',
+          950: '#0f1a3e',
         },
-
-        // PAU Grade Colors
-        'grade-a': '#059669',  // Green - Excellent (updated)
-        'grade-b': '#2563EB',  // Blue - Good (updated)
-        'grade-c': '#D97706',  // Amber - Fair (updated)
-        'grade-d': '#DC2626',  // Red - Pass (updated)
-        'grade-e': '#991B1B',  // Dark Red - Conditional
-        'grade-f': '#000000',  // Black - Fail
-
-        // Status Colors
+        surface: {
+          0: '#ffffff',
+          50: '#f8f9fb',
+          100: '#f1f3f6',
+          200: '#e5e7ee',
+          300: '#d1d5e0',
+          400: '#9ba2b5',
+        },
+        gold: {
+          400: '#f5b731',
+          500: '#e8a317',
+          600: '#cc7f10',
+        },
+        'grade-a': '#059669',
+        'grade-b': '#2563EB',
+        'grade-c': '#D97706',
+        'grade-d': '#DC2626',
+        'grade-e': '#991B1B',
+        'grade-f': '#000000',
         'on-track': '#059669',
         'at-risk': '#D97706',
         'critical': '#DC2626',
-
-        // Mood Colors
         'mood-focused': '#8B5CF6',
         'mood-tired': '#6B7280',
         'mood-stressed': '#DC2626',
@@ -42,15 +49,41 @@ export default {
         'mood-motivated': '#059669',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        display: ['Fraunces', 'Georgia', 'serif'],
+        mono: ['JetBrains Mono', 'monospace'],
       },
       animation: {
         'pulse-subtle': 'pulse-subtle 3s ease-in-out infinite',
+        'fade-up': 'fadeUp 0.5s ease-out both',
+        'fade-up-1': 'fadeUp 0.5s ease-out 0.06s both',
+        'fade-up-2': 'fadeUp 0.5s ease-out 0.12s both',
+        'fade-up-3': 'fadeUp 0.5s ease-out 0.18s both',
+        'fade-up-4': 'fadeUp 0.5s ease-out 0.24s both',
+        'fade-up-5': 'fadeUp 0.5s ease-out 0.30s both',
+        'shimmer': 'shimmer 2.5s ease-in-out infinite',
+        'ring-fill': 'ringFill 1.4s cubic-bezier(0.4, 0, 0.2, 1) 0.3s both',
+        'check-pop': 'checkPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+        'glow-pulse': 'glowPulse 0.8s ease-out',
+        'step-fade': 'stepFade 3s ease-in-out infinite',
+        'gentle-float': 'gentleFloat 3s ease-in-out infinite',
+        'count-reveal': 'countReveal 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
       },
       keyframes: {
         'pulse-subtle': {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.9' },
+        },
+        fadeUp: {
+          from: { opacity: '0', transform: 'translateY(12px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        shimmer: {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        ringFill: {
+          from: { strokeDashoffset: '314.16' },
         },
       },
     },

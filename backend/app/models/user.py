@@ -4,6 +4,7 @@ User Model - SQLAlchemy ORM
 from sqlalchemy import Column, String, Integer, Numeric, DateTime, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import uuid
 from app.database import Base
 
@@ -25,6 +26,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True)
+
+    # Relationships
+    library_contributions = relationship("LibraryDocument", back_populates="uploader")
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, name={self.full_name})>"

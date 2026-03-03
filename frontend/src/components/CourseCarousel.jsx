@@ -1,302 +1,203 @@
 import { useRef, useState, useEffect } from 'react'
 
-/**
- * Get gradient colors based on predicted grade (PAU scale)
- * A: 5.0, B: 4.0, C: 3.0, D: 2.0, E: 1.0, F: 0.0
- */
-const getGradeColors = (gradePoint) => {
-  if (!gradePoint || gradePoint === 0) return { from: '#f87171', to: '#dc2626' } // red - F
-  if (gradePoint >= 5.0) return { from: '#34d399', to: '#059669' } // emerald-400 to emerald-600 - A
-  if (gradePoint >= 4.0) return { from: '#60a5fa', to: '#2563eb' } // blue-400 to blue-600 - B
-  if (gradePoint >= 3.0) return { from: '#fbbf24', to: '#d97706' } // amber-400 to amber-600 - C
-  if (gradePoint >= 2.0) return { from: '#fb923c', to: '#ea580c' } // orange-400 to orange-600 - D
-  return { from: '#ef4444', to: '#b91c1c' } // red-500 to red-700 - E
+/* ─── Grade system (PAU 5.0 scale) — Deep gemstone tones ───
+   Rich enough to clearly indicate course health against
+   the dark navy container, but not billboard-bright.       */
+const gradeConfig = (gp) => {
+  if (!gp || gp === 0) return { letter: 'F', from: '#b83a3a', to: '#7a2222', glow: 'rgba(184,58,58,0.30)' }
+  if (gp >= 5.0) return { letter: 'A', from: '#1d8a62', to: '#0f5e40', glow: 'rgba(29,138,98,0.30)' }
+  if (gp >= 4.0) return { letter: 'B', from: '#2e6db8', to: '#1b4a8a', glow: 'rgba(46,109,184,0.30)' }
+  if (gp >= 3.0) return { letter: 'C', from: '#b8862e', to: '#8a631e', glow: 'rgba(184,134,46,0.30)' }
+  if (gp >= 2.0) return { letter: 'D', from: '#b8622e', to: '#8a441e', glow: 'rgba(184,98,46,0.30)' }
+  if (gp >= 1.0) return { letter: 'E', from: '#b83a3a', to: '#7a2222', glow: 'rgba(184,58,58,0.30)' }
+  return { letter: 'F', from: '#b83a3a', to: '#7a2222', glow: 'rgba(184,58,58,0.30)' }
 }
 
-/**
- * Get box shadow based on grade (PAU scale)
- */
-const getGradeShadow = (gradePoint) => {
-  if (!gradePoint || gradePoint === 0) return '0 10px 15px -3px rgba(239, 68, 68, 0.4), 0 4px 6px -4px rgba(239, 68, 68, 0.4)'
-  if (gradePoint >= 5.0) return '0 10px 15px -3px rgba(16, 185, 129, 0.4), 0 4px 6px -4px rgba(16, 185, 129, 0.4)'
-  if (gradePoint >= 4.0) return '0 10px 15px -3px rgba(59, 130, 246, 0.4), 0 4px 6px -4px rgba(59, 130, 246, 0.4)'
-  if (gradePoint >= 3.0) return '0 10px 15px -3px rgba(245, 158, 11, 0.4), 0 4px 6px -4px rgba(245, 158, 11, 0.4)'
-  if (gradePoint >= 2.0) return '0 10px 15px -3px rgba(249, 115, 22, 0.4), 0 4px 6px -4px rgba(249, 115, 22, 0.4)'
-  return '0 10px 15px -3px rgba(220, 38, 38, 0.4), 0 4px 6px -4px rgba(220, 38, 38, 0.4)'
-}
+const getGradeLetter = (gp) => gradeConfig(gp).letter
 
-/**
- * Get grade letter from grade point (PAU scale)
- */
-const getGradeLetter = (gradePoint) => {
-  if (!gradePoint || gradePoint === 0) return 'F'
-  if (gradePoint >= 5.0) return 'A'
-  if (gradePoint >= 4.0) return 'B'
-  if (gradePoint >= 3.0) return 'C'
-  if (gradePoint >= 2.0) return 'D'
-  if (gradePoint >= 1.0) return 'E'
-  return 'F'
-}
-
-/**
- * Mini circular progress ring
- */
-const MiniProgress = ({ value, max }) => {
-  const percentage = Math.min((value / max) * 100, 100)
-  return (
-    <div className="relative w-10 h-10">
-      <svg className="w-10 h-10 transform -rotate-90">
-        <circle
-          cx="20" cy="20" r="16"
-          fill="none"
-          stroke="rgba(255,255,255,0.2)"
-          strokeWidth="3"
-        />
-        <circle
-          cx="20" cy="20" r="16"
-          fill="none"
-          stroke="white"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeDasharray={100.53}
-          strokeDashoffset={100.53 - (percentage / 100) * 100.53}
-          className="transition-all duration-500"
-        />
-      </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-white text-xs font-bold">{Math.round(percentage)}%</span>
-      </div>
-    </div>
-  )
-}
-
-/**
- * CourseCarousel - Auto-scrolling infinite carousel of enrolled courses
- * Premium design with dark background and glowing cards
- */
+/* ═══════════════════════════════════════
+   CourseCarousel
+   ═══════════════════════════════════════ */
 export default function CourseCarousel({ enrolledCourses, onCourseClick }) {
   const scrollRef = useRef(null)
   const [isPaused, setIsPaused] = useState(false)
-  const animationRef = useRef(null)
-  const scrollPositionRef = useRef(0)
-  const pauseTimeoutRef = useRef(null)
+  const animRef = useRef(null)
+  const posRef = useRef(0)
+  const pauseTimer = useRef(null)
 
-  const handleCardEnter = () => {
-    if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current)
-    setIsPaused(true)
-  }
+  const pause = () => { clearTimeout(pauseTimer.current); setIsPaused(true) }
+  const resume = () => { pauseTimer.current = setTimeout(() => setIsPaused(false), 200) }
 
-  const handleCardLeave = () => {
-    // Small delay before resuming to prevent jitter between cards
-    pauseTimeoutRef.current = setTimeout(() => setIsPaused(false), 150)
-  }
-
-  // Duplicate courses for infinite scroll effect
-  const duplicatedCourses = enrolledCourses?.length > 0
+  const duped = enrolledCourses?.length > 0
     ? [...enrolledCourses, ...enrolledCourses, ...enrolledCourses]
     : []
 
   useEffect(() => {
-    if (!enrolledCourses || enrolledCourses.length === 0) return
+    if (!enrolledCourses?.length) return
+    const el = scrollRef.current
+    if (!el) return
 
-    const scrollContainer = scrollRef.current
-    if (!scrollContainer) return
+    const cardW = 260
+    const setW = cardW * enrolledCourses.length
+    posRef.current = setW
+    el.scrollLeft = setW
 
-    const cardWidth = 280 // Card width + gap
-    const totalWidth = cardWidth * enrolledCourses.length
-
-    // Start from middle set
-    scrollPositionRef.current = totalWidth
-    scrollContainer.scrollLeft = totalWidth
-
-    const animate = () => {
-      if (!isPaused && scrollContainer) {
-        scrollPositionRef.current += 0.6 // Smooth scroll speed
-
-        // Reset to middle when reaching end
-        if (scrollPositionRef.current >= totalWidth * 2) {
-          scrollPositionRef.current = totalWidth
-        }
-
-        scrollContainer.scrollLeft = scrollPositionRef.current
+    const tick = () => {
+      if (!isPaused && el) {
+        posRef.current += 0.5
+        if (posRef.current >= setW * 2) posRef.current = setW
+        el.scrollLeft = posRef.current
       }
-      animationRef.current = requestAnimationFrame(animate)
+      animRef.current = requestAnimationFrame(tick)
     }
-
-    animationRef.current = requestAnimationFrame(animate)
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
+    animRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(animRef.current)
   }, [enrolledCourses, isPaused])
 
-  if (!enrolledCourses || enrolledCourses.length === 0) {
-    return null
-  }
+  if (!enrolledCourses?.length) return null
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy-900 via-navy-800 to-slate-900 py-6 pb-8">
-      {/* Decorative background elements */}
-      <div className="absolute top-0 left-1/4 w-64 h-64 bg-navy-600/20 rounded-full blur-3xl" />
-      <div className="absolute bottom-0 right-1/4 w-48 h-48 bg-blue-600/20 rounded-full blur-3xl" />
+    <div className="relative overflow-hidden rounded-2xl">
+      {/* Dark container */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[#0c1425] via-[#111b33] to-[#0e1628]" />
+      <div className="absolute inset-0 opacity-[0.02]" style={{
+        backgroundImage: 'linear-gradient(rgba(255,255,255,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.12) 1px, transparent 1px)',
+        backgroundSize: '32px 32px',
+      }} />
 
-      {/* Header */}
-      <div className="relative z-10 flex justify-between items-center px-6 mb-4">
-        <div>
-          <h3 className="text-white font-bold text-lg">Your Courses</h3>
-          <p className="text-white/60 text-sm">{enrolledCourses.length} enrolled courses</p>
+      <div className="relative z-10 py-5">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 mb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-1 h-4 rounded-full bg-gradient-to-b from-blue-400 to-navy-500" />
+            <h3 className="text-[14px] font-bold text-white/90">Your Courses</h3>
+            <span className="text-[11px] font-mono text-white/30">{enrolledCourses.length}</span>
+          </div>
+        </div>
+
+        {/* Fade edges */}
+        <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#0c1425] to-transparent z-20 pointer-events-none" />
+        <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#0e1628] to-transparent z-20 pointer-events-none" />
+
+        {/* Scroll track */}
+        <div
+          ref={scrollRef}
+          className={`flex gap-3.5 px-6 ${isPaused ? 'overflow-x-auto scrollbar-hide' : 'overflow-x-hidden'}`}
+        >
+          {duped.map((enrollment, idx) => {
+            const ca = enrollment.ca_score || 0
+            const part = enrollment.participation_score || 0
+            const totalCA = ca + part
+            const exam = enrollment.exam_score || 0
+            const total = totalCA + exam
+            const taskPct = enrollment.completion_rate || 0
+
+            let gp = enrollment.predicted_grade_point
+            let estimated = false
+            if (gp === null || gp === undefined || gp === 0) {
+              estimated = true
+              if (exam > 0) {
+                gp = total >= 70 ? 5 : total >= 60 ? 4 : total >= 50 ? 3 : total >= 45 ? 2 : total >= 40 ? 1 : 0
+              } else if (totalCA > 0) {
+                const caP = (part ? totalCA : ca + 3) / 35
+                const pred = (part ? totalCA : ca + 3) + caP * 0.85 * 65
+                gp = pred >= 70 ? 5 : pred >= 60 ? 4 : pred >= 50 ? 3 : pred >= 45 ? 2 : pred >= 40 ? 1 : 0
+              } else {
+                gp = 4
+              }
+            }
+
+            const letter = enrollment.predicted_letter_grade || (estimated && total === 0 ? '—' : getGradeLetter(gp))
+            const g = gradeConfig(gp)
+            const isAssumed = !enrollment.participation_score
+
+            return (
+              <div
+                key={`${enrollment.id}-${idx}`}
+                onClick={() => onCourseClick?.(enrollment)}
+                onMouseEnter={pause}
+                onMouseLeave={resume}
+                className="flex-shrink-0 w-[244px] group cursor-pointer"
+              >
+                <div
+                  className="relative rounded-xl h-[156px] flex flex-col justify-between transition-all duration-300 group-hover:-translate-y-1 group-hover:scale-[1.02] overflow-hidden"
+                  style={{
+                    background: `linear-gradient(135deg, ${g.from}, ${g.to})`,
+                    boxShadow: `0 4px 14px -4px ${g.glow}, 0 0 0 0 transparent`,
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.boxShadow = `0 12px 32px -6px ${g.glow}, 0 0 0 1px rgba(255,255,255,0.08)`}
+                  onMouseLeave={(e) => e.currentTarget.style.boxShadow = `0 4px 14px -4px ${g.glow}, 0 0 0 0 transparent`}
+                >
+                  {/* Highlight shimmer */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-white/[0.12] via-transparent to-black/[0.08]" />
+                  {/* Corner accent */}
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-white/[0.06] rounded-bl-[60px]" />
+
+                  {/* Content */}
+                  <div className="relative z-10 p-4 flex flex-col h-full justify-between">
+                    {/* Top: code + grade */}
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0 flex-1 pr-3">
+                        <h4 className="text-[16px] font-bold text-white truncate leading-tight tracking-tight">{enrollment.course.code}</h4>
+                        <p className="text-[10px] text-white/60 truncate mt-0.5">{enrollment.course.title}</p>
+                      </div>
+                      <div className="w-11 h-11 rounded-lg bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/10">
+                        <span className="font-display text-[22px] font-bold text-white drop-shadow-sm">{letter}</span>
+                      </div>
+                    </div>
+
+                    {/* Bottom: scores */}
+                    <div>
+                      {/* Score + CA breakdown */}
+                      <div className="flex items-end justify-between mb-2">
+                        <div className="flex items-baseline gap-1">
+                          <span className="font-mono text-[22px] font-bold text-white leading-none">{total}</span>
+                          <span className="text-[11px] text-white/50">/100</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-white/60">
+                            CA {totalCA}/35{isAssumed && '*'}
+                          </span>
+                          <span className="text-white/30 mx-1">·</span>
+                          <span className="text-[10px] text-white/60">{enrollment.course.credits}cr</span>
+                        </div>
+                      </div>
+
+                      {/* Full-width score bar */}
+                      <div className="h-1.5 bg-black/20 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-white/70 rounded-full transition-all duration-700"
+                          style={{ width: `${total}%` }}
+                        />
+                      </div>
+
+                      {/* Tasks completion row */}
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-[9px] text-white/40 uppercase tracking-wider font-medium">Tasks</span>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-14 h-1 bg-black/20 rounded-full overflow-hidden">
+                            <div className="h-full bg-white/50 rounded-full transition-all duration-500" style={{ width: `${taskPct}%` }} />
+                          </div>
+                          <span className="font-mono text-[9px] font-semibold text-white/50">{Math.round(taskPct)}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Priority flag */}
+                  {enrollment.is_priority && (
+                    <div className="absolute top-3 right-3 z-20">
+                      <div className="bg-white/25 backdrop-blur-sm text-white text-[8px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider border border-white/20">
+                        Priority
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
-
-      {/* Gradient fade edges */}
-      <div className="absolute left-0 top-0 bottom-0 w-20 bg-gradient-to-r from-navy-900 to-transparent z-10 pointer-events-none" />
-      <div className="absolute right-0 top-0 bottom-0 w-20 bg-gradient-to-l from-slate-900 to-transparent z-10 pointer-events-none" />
-
-      {/* Scrolling container */}
-      <div
-        ref={scrollRef}
-        className={`flex gap-5 px-6 py-4 ${isPaused ? 'overflow-x-auto scrollbar-hide' : 'overflow-x-hidden'}`}
-      >
-        {duplicatedCourses.map((enrollment, index) => {
-          // Calculate ACTUAL total score including participation
-          const caFromTasks = enrollment.ca_score || 0  // Out of 30
-          const participationScore = enrollment.participation_score || 0  // Out of 5
-          const totalCA = caFromTasks + participationScore  // Out of 35
-          const examScore = enrollment.exam_score || 0  // Out of 65
-          const totalScore = totalCA + examScore  // Out of 100
-
-          const taskCompletion = enrollment.completion_rate || 0
-
-          // Use predicted grade point if available, otherwise estimate from current score
-          let gradePoint = enrollment.predicted_grade_point
-          let isEstimated = false
-
-          // Only use predicted grade point if it's a valid number (and not 0)
-          if (gradePoint === null || gradePoint === undefined || gradePoint === 0) {
-            if (examScore > 0) {
-              // Both CA and exam exist - use actual total score with PAU grading scale
-              if (totalScore >= 70) gradePoint = 5.0        // A
-              else if (totalScore >= 60) gradePoint = 4.0   // B
-              else if (totalScore >= 50) gradePoint = 3.0   // C
-              else if (totalScore >= 45) gradePoint = 2.0   // D
-              else if (totalScore >= 40) gradePoint = 1.0   // E
-              else gradePoint = 0.0                         // F
-              isEstimated = true
-            } else if (totalCA > 0) {
-              // Only CA exists - predict using 85% retention model
-              // If participation not entered, assume 3/5 (average)
-              const caForPrediction = enrollment.participation_score
-                ? totalCA  // Use actual total CA
-                : caFromTasks + 3.0  // Add assumed 3 if not set
-
-              // Predict exam score: (CA/35) * 0.85 * 65
-              const caPercentage = caForPrediction / 35.0
-              const predictedExam = caPercentage * 0.85 * 65.0
-              const predictedTotal = caForPrediction + predictedExam
-
-              // Apply PAU grading scale to predicted total
-              if (predictedTotal >= 70) gradePoint = 5.0      // A
-              else if (predictedTotal >= 60) gradePoint = 4.0 // B
-              else if (predictedTotal >= 50) gradePoint = 3.0 // C
-              else if (predictedTotal >= 45) gradePoint = 2.0 // D
-              else if (predictedTotal >= 40) gradePoint = 1.0 // E
-              else gradePoint = 0.0                           // F
-              isEstimated = true
-            } else {
-              // No data yet - use a neutral blue color to indicate potential (optimistic view)
-              gradePoint = 4.0 // B grade color - represents potential/target
-              isEstimated = true
-            }
-          }
-
-          const gradeLetter = enrollment.predicted_letter_grade || (isEstimated && totalScore === 0 ? '?' : getGradeLetter(gradePoint))
-
-          const colors = getGradeColors(gradePoint)
-          const shadow = getGradeShadow(gradePoint)
-
-          return (
-            <div
-              key={`${enrollment.id}-${index}`}
-              onClick={() => onCourseClick?.(enrollment)}
-              onMouseEnter={handleCardEnter}
-              onMouseLeave={handleCardLeave}
-              className="flex-shrink-0 w-64 h-36 rounded-xl p-5 cursor-pointer transform hover:scale-105 hover:-translate-y-1 transition-all duration-300 relative"
-              style={{
-                background: `linear-gradient(to bottom right, ${colors.from}, ${colors.to})`,
-                boxShadow: shadow
-              }}
-            >
-              {/* Top row - Course code and grade */}
-              <div className="flex justify-between items-start mb-3">
-                <div className="flex-1 min-w-0 pr-3">
-                  <h4 className="text-white font-bold text-xl truncate">
-                    {enrollment.course.code}
-                  </h4>
-                  <p className="text-white/70 text-xs truncate mt-0.5">
-                    {enrollment.course.title}
-                  </p>
-                </div>
-
-                {/* Grade badge */}
-                <div className="flex flex-col items-center">
-                  <span className="text-[10px] text-white/60 uppercase tracking-wider">Grade</span>
-                  <div className="bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1 mt-0.5">
-                    <span className="text-white font-black text-2xl">{gradeLetter}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom row - Stats */}
-              <div className="flex justify-between items-end">
-                {/* Score info */}
-                <div>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-white font-bold text-2xl">{totalScore.toFixed(0)}</span>
-                    <span className="text-white/60 text-sm">/100</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    {/* Show CA breakdown */}
-                    {(() => {
-                      const isAssumed = !enrollment.participation_score
-
-                      return (
-                        <>
-                          <span className="text-white/70 text-xs">
-                            CA: {totalCA.toFixed(0)}/35
-                          </span>
-                          {isAssumed && (
-                            <span className="text-white/50 text-[10px]">(+3 est.)</span>
-                          )}
-                        </>
-                      )
-                    })()}
-                    <span className="text-white/40">•</span>
-                    <span className="text-white/70 text-xs">{enrollment.course.credits} cr</span>
-                  </div>
-                </div>
-
-                {/* Task completion ring */}
-                <div className="flex flex-col items-center">
-                  <MiniProgress value={taskCompletion} max={100} />
-                  <span className="text-[10px] text-white/60 mt-1">Tasks</span>
-                </div>
-              </div>
-
-              {/* Priority indicator */}
-              {enrollment.is_priority && (
-                <div className="absolute -top-1 -right-1">
-                  <div className="bg-amber-400 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg">
-                    PRIORITY
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
     </div>
   )
 }
