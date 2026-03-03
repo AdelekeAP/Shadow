@@ -471,6 +471,24 @@ async def update_study_plan(
         db.commit()
         db.refresh(plan)
 
+        # Send notification on plan completion
+        if plan.completion_percentage >= 100 and plan.after_score is None:
+            try:
+                from app.services.notification_service import NotificationService
+                from app.models.notification import NotificationType, NotificationPriority
+                ns = NotificationService(db)
+                ns.create_notification(
+                    user_id=plan.user_id,
+                    title="Study Plan Complete!",
+                    message=f"You finished your plan for \"{plan.topic}\". Rate your knowledge now to track improvement.",
+                    notification_type=NotificationType.STUDY_PLAN.value if hasattr(NotificationType, 'STUDY_PLAN') else NotificationType.SYSTEM.value,
+                    priority=NotificationPriority.MEDIUM.value,
+                    study_plan_id=plan.id,
+                    action_url="/smartstudy",
+                )
+            except Exception as notif_err:
+                logger.warning(f"Failed to send completion notification: {notif_err}")
+
         return {
             "message": "Study plan updated successfully",
             "study_plan_id": str(plan.id),

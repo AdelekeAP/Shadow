@@ -400,6 +400,23 @@ def generate_study_plan(
 
         logger.info(f"✅ Study plan created with ID: {study_plan.id}")
 
+        # Send notification for new study plan
+        try:
+            from app.services.notification_service import NotificationService
+            from app.models.notification import NotificationType, NotificationPriority
+            ns = NotificationService(db)
+            ns.create_notification(
+                user_id=study_plan.user_id,
+                title=f"New Study Plan: {topic}",
+                message=f"Your {duration_days}-day plan for \"{topic}\" is ready. Start Day 1 now!",
+                notification_type=NotificationType.STUDY_PLAN.value if hasattr(NotificationType, 'STUDY_PLAN') else NotificationType.SYSTEM.value,
+                priority=NotificationPriority.HIGH.value,
+                study_plan_id=study_plan.id,
+                action_url="/smartstudy",
+            )
+        except Exception as notif_err:
+            logger.warning(f"Failed to send study plan notification: {notif_err}")
+
         # Create StudyPlanResource entries with curated YouTube/Reddit resources
         logger.info(f"🔍 Curating resources for '{topic}' (learning style: {learning_style or 'balanced'})")
 
