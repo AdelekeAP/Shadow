@@ -550,7 +550,7 @@ async def update_task(
 
 @router.patch(
     "/{task_id}/complete",
-    response_model=TaskResponse,
+    response_model=dict,
     operation_id="complete_task",
     summary="Mark a task as complete",
 )
@@ -561,7 +561,8 @@ async def mark_task_complete(
     current_user: User = Depends(get_user_from_token)
 ):
     """
-    Mark a task as complete
+    Mark a task as complete. Returns the updated task and, if the score
+    is below 60%, an `intervention` object suggesting a SmartStudy plan.
 
     Args:
         task_id: Task UUID
@@ -570,7 +571,7 @@ async def mark_task_complete(
         current_user: Authenticated user
 
     Returns:
-        Updated task
+        Updated task with optional intervention suggestion
     """
     try:
         task_uuid = UUID(task_id)
@@ -654,7 +655,32 @@ async def mark_task_complete(
             # Calculate and update predicted grades
             update_course_grades(user_course, db)
 
-    return TaskResponse(**task.to_dict())
+    # Build response
+    task_data = task.to_dict()
+    response = {**task_data}
+
+    # Check if score is low enough to suggest SmartStudy intervention
+    if task.earned_marks is not None and task.max_marks and float(task.max_marks) > 0:
+        score_pct = (float(task.earned_marks) / float(task.max_marks)) * 100
+        if score_pct < 60:
+            # Get course info for the suggestion
+            user_course = db.query(UserCourse).filter(
+                UserCourse.id == task.user_course_id
+            ).first()
+            course_code = user_course.course.code if user_course and user_course.course else None
+            course_title = user_course.course.title if user_course and user_course.course else None
+
+            response["intervention"] = {
+                "suggested": True,
+                "reason": "low_score",
+                "score_percentage": round(score_pct, 1),
+                "task_title": task.title,
+                "course_code": course_code,
+                "course_title": course_title,
+                "message": f"You scored {round(score_pct)}% on {task.title}. SmartStudy can create a personalized study plan to help you improve.",
+            }
+
+    return response
 
 
 @router.delete(

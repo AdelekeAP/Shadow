@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { completeTask, deleteTask } from '../services/api'
 import EditTaskModal from './EditTaskModal'
 
@@ -6,10 +7,12 @@ import EditTaskModal from './EditTaskModal'
    TaskItem — single row
    ═══════════════════════════════════════ */
 const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
+  const navigate = useNavigate()
   const [isLoading, setIsLoading] = useState(false)
   const [showMarkInput, setShowMarkInput] = useState(false)
   const [earnedMarks, setEarnedMarks] = useState('')
   const [showEditMarks, setShowEditMarks] = useState(false)
+  const [intervention, setIntervention] = useState(null)
 
   const handleComplete = async () => {
     if (!showMarkInput) { setShowMarkInput(true); return }
@@ -17,8 +20,9 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
     try {
       const completionData = {}
       if (earnedMarks) completionData.earned_marks = parseFloat(earnedMarks)
-      await completeTask(task.id, completionData)
+      const result = await completeTask(task.id, completionData)
       onUpdate(); setShowMarkInput(false); setEarnedMarks('')
+      if (result?.intervention?.suggested) setIntervention(result.intervention)
     } catch (e) { console.error(e); alert(e.detail || 'Failed to complete task') }
     finally { setIsLoading(false) }
   }
@@ -266,6 +270,61 @@ const TaskItem = ({ task, onUpdate, onDelete, onEdit }) => {
       )}
       {task.is_urgent && !task.is_completed && !isOverdue && (
         <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-amber-400" />
+      )}
+
+      {/* SmartStudy Intervention Modal */}
+      {intervention && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setIntervention(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="bg-gradient-to-br from-navy-800 to-navy-900 px-6 py-5 text-center">
+              <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3">
+                <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                </svg>
+              </div>
+              <p className="text-white/90 text-[14px] font-semibold">
+                You scored <span className="text-amber-400">{intervention.score_percentage}%</span> on
+              </p>
+              <p className="text-white text-[16px] font-bold mt-0.5">{intervention.task_title}</p>
+              {intervention.course_code && (
+                <p className="text-white/50 text-[12px] mt-1">{intervention.course_code} — {intervention.course_title}</p>
+              )}
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5">
+              <p className="text-[13px] text-surface-500 text-center mb-5">
+                SmartStudy can create a personalized study plan to help you improve in this area.
+              </p>
+
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => {
+                    setIntervention(null)
+                    navigate('/smartstudy', {
+                      state: {
+                        courseCode: intervention.course_code,
+                        courseName: intervention.course_title,
+                        topic: intervention.task_title,
+                        reason: 'low_score',
+                      }
+                    })
+                  }}
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-navy-800 to-navy-700 text-white text-[13px] font-semibold rounded-xl hover:from-navy-900 hover:to-navy-800 transition-all shadow-sm"
+                >
+                  Get Study Plan
+                </button>
+                <button
+                  onClick={() => setIntervention(null)}
+                  className="w-full py-2.5 px-4 text-surface-400 text-[13px] font-medium rounded-xl hover:bg-surface-50 transition-colors"
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
