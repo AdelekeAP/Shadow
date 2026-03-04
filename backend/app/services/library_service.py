@@ -424,7 +424,8 @@ def browse_library(
     search_query: Optional[str] = None,
     sort_by: str = "helpful",
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    user_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Browse library documents with optional filters.
@@ -453,13 +454,29 @@ def browse_library(
         route schema is ``LibraryBrowseResponse``.
     """
     try:
-        query = db.query(LibraryDocument).options(
-            joinedload(LibraryDocument.course),
-            joinedload(LibraryDocument.uploader)
-        ).filter(
-            LibraryDocument.is_public == True,
-            LibraryDocument.scan_status == "clean"
-        )
+        # Show public+clean docs to everyone, but also show the uploader
+        # their own documents regardless of scan_status or visibility.
+        if user_id:
+            query = db.query(LibraryDocument).options(
+                joinedload(LibraryDocument.course),
+                joinedload(LibraryDocument.uploader)
+            ).filter(
+                or_(
+                    and_(
+                        LibraryDocument.is_public == True,
+                        LibraryDocument.scan_status == "clean"
+                    ),
+                    LibraryDocument.uploaded_by == user_id
+                )
+            )
+        else:
+            query = db.query(LibraryDocument).options(
+                joinedload(LibraryDocument.course),
+                joinedload(LibraryDocument.uploader)
+            ).filter(
+                LibraryDocument.is_public == True,
+                LibraryDocument.scan_status == "clean"
+            )
 
         # Filter by course
         if course_id:
@@ -567,6 +584,10 @@ def vote_on_document(
         if existing_vote:
             # Update existing vote
             old_value = existing_vote.vote_value
+            # Validate stored value before delta calculation
+            if old_value not in (-1, 1):
+                logger.warning(f"⚠️ Corrupt vote value {old_value} for vote {existing_vote.id}, resetting")
+                old_value = 0
             existing_vote.vote_value = vote_value
             existing_vote.voted_at = datetime.now(timezone.utc)
 
