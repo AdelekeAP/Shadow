@@ -12,6 +12,9 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
+SCAN_TIMEOUT = 30  # seconds — prevents hangs on ZIP bombs or large files
+
+
 def _get_clamd() -> Optional[Any]:
     """Get a ClamAV daemon connection, or None if unavailable."""
     try:
@@ -20,14 +23,14 @@ def _get_clamd() -> Optional[Any]:
         return None
 
     try:
-        cd = pyclamd.ClamdUnixSocket()
+        cd = pyclamd.ClamdUnixSocket(timeout=SCAN_TIMEOUT)
         if cd.ping():
             return cd
     except Exception:
         pass
 
     try:
-        cd = pyclamd.ClamdNetworkSocket()
+        cd = pyclamd.ClamdNetworkSocket(timeout=SCAN_TIMEOUT)
         if cd.ping():
             return cd
     except Exception:

@@ -2,7 +2,7 @@
 Library API Routes - Learning Library Endpoints
 Student-powered resource sharing system
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -29,6 +29,7 @@ from app.services.library_service import (
 )
 from app.utils.auth import get_current_user
 from app.services.cache_service import cache_get, cache_set, cache_delete_pattern
+from app.middleware.rate_limiter import limiter
 
 router = APIRouter(prefix="/library", tags=["library"])
 logger = logging.getLogger(__name__)
@@ -43,6 +44,28 @@ def _validate_uuid(value: str, name: str = "ID") -> str:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid {name} format"
+        )
+
+
+def _check_document_access(document: LibraryDocument, user: User) -> None:
+    """
+    Validate that a user can access a document.
+
+    Raises HTTPException if access is denied (private doc or unscanned doc
+    that doesn't belong to the requesting user).
+    """
+    is_owner = str(document.uploaded_by) == str(user.id)
+
+    if not document.is_public and not is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this document"
+        )
+
+    if document.scan_status != "clean" and not is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This document is pending security review"
         )
 
 
@@ -107,7 +130,8 @@ async def browse_library_documents(
             search_query=search,
             sort_by=sort_by or 'helpful',
             limit=limit,
-            offset=offset
+            offset=offset,
+            user_id=str(current_user.id)
         )
 
         cache_set(cache_key, result, ttl=300)
@@ -137,7 +161,7 @@ async def get_library_document(
     """
     Get details of a specific library document
 
-    Increments view count automatically.
+    Returns document metadata. View count is tracked via the /view endpoint.
     """
     try:
         _validate_uuid(document_id, "document_id")
@@ -152,24 +176,7 @@ async def get_library_document(
                 detail="Document not found"
             )
 
-        # Check access (must be public or uploaded by user)
-        if not document.is_public and str(document.uploaded_by) != str(current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have access to this document"
-            )
-
-        # Block public access to unscanned documents
-        if document.scan_status != "clean" and str(document.uploaded_by) != str(current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This document is pending security review"
-            )
-
-        # Increment view count
-        increment_view_count(db, document_id)
-        cache_delete_pattern("library:browse:*")
-        cache_delete_pattern(f"library:contributions:{document.uploaded_by}")
+        _check_document_access(document, current_user)
 
         return document.to_dict()
 
@@ -188,7 +195,9 @@ async def get_library_document(
     operation_id="vote_on_library_document",
     summary="Vote on a library document",
 )
+@limiter.limit("30/minute")
 async def vote_on_library_document(
+    request: Request,
     document_id: str,
     vote_data: VoteRequest,
     db: Session = Depends(get_db),
@@ -294,19 +303,7 @@ async def view_library_document(
                 detail="Document not found"
             )
 
-        # Check access
-        if not document.is_public and str(document.uploaded_by) != str(current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have access to this document"
-            )
-
-        # Block public access to unscanned documents
-        if document.scan_status != "clean" and str(document.uploaded_by) != str(current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This document is pending security review"
-            )
+        _check_document_access(document, current_user)
 
         # For PPTX files, serve the converted PDF if available
         file_to_serve = document.file_path
@@ -391,19 +388,7 @@ async def download_library_document(
                 detail="Document not found"
             )
 
-        # Check access
-        if not document.is_public and str(document.uploaded_by) != str(current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have access to this document"
-            )
-
-        # Block public access to unscanned documents
-        if document.scan_status != "clean" and str(document.uploaded_by) != str(current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This document is pending security review"
-            )
+        _check_document_access(document, current_user)
 
         # Check if file exists
         if not os.path.exists(document.file_path):

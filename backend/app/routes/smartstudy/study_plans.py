@@ -1,7 +1,7 @@
 """
 SmartStudy Study Plan Endpoints (Phase 2)
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -33,6 +33,7 @@ from app.services.document_processor import (
     validate_file,
 )
 from app.services.library_service import contribute_to_library
+from app.services.cache_service import cache_delete_pattern
 
 import logging
 
@@ -100,7 +101,9 @@ async def create_study_plan(
     operation_id="upload_document_for_study_plan",
     summary="Generate study plan with optional document upload",
 )
+@limiter.limit("5/minute")
 async def create_study_plan_with_upload(
+    request: Request,
     topic: str = Form(None),
     uploaded_file: UploadFile = File(None),
     course_id: str = Form(None),
@@ -146,12 +149,21 @@ async def create_study_plan_with_upload(
 
         # Handle library document selection
         if library_document_id and not uploaded_file:
+            # Validate UUID format before using in query
+            try:
+                library_document_uuid = UUID(library_document_id)
+            except (ValueError, AttributeError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid library_document_id format"
+                )
+
             logger.info(f"📚 Using library document: {library_document_id}")
 
             # Fetch library document
             from app.models.library import LibraryDocument
             library_doc = db.query(LibraryDocument).filter(
-                LibraryDocument.id == library_document_id
+                LibraryDocument.id == library_document_uuid
             ).first()
 
             if not library_doc:
@@ -235,8 +247,8 @@ async def create_study_plan_with_upload(
                 # Clean up temporary file
                 try:
                     os.unlink(temp_file_path)
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp file: {e}")
 
         # Build document metadata for resource injection (reuse library_doc from above)
         doc_filename = None
@@ -245,7 +257,7 @@ async def create_study_plan_with_upload(
             doc_filename = uploaded_file.filename
         elif library_doc:
             doc_filename = library_doc.file_name
-            doc_view_url = f"/api/v1/library/documents/{library_document_id}/view"
+            doc_view_url = f"/api/v1/library/documents/{str(library_doc.id)}/view"
 
         # Generate study plan
         plan_result = generate_study_plan(
@@ -291,6 +303,9 @@ async def create_study_plan_with_upload(
             if library_result.get("success"):
                 lib_doc_id = library_result.get('library_document_id')
                 logger.info(f"✅ Document added to library: {lib_doc_id}")
+                cache_delete_pattern("library:browse:*")
+                cache_delete_pattern("library:stats*")
+                cache_delete_pattern(f"library:contributions:{current_user.id}")
 
                 # Backfill uploaded_slides resources with the library view URL
                 if lib_doc_id and plan_result.get("study_plan_id"):
@@ -334,6 +349,8 @@ async def create_study_plan_with_upload(
 )
 async def get_user_study_plans(
     active_only: bool = True,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -341,6 +358,8 @@ async def get_user_study_plans(
     Get all study plans for current user
 
     - **active_only**: If true, only return active (incomplete) plans
+    - **limit**: Max plans per page (1-100, default 20)
+    - **offset**: Number of plans to skip (default 0)
     """
     try:
         query = db.query(StudyPlan).filter(StudyPlan.user_id == current_user.id)
@@ -348,7 +367,7 @@ async def get_user_study_plans(
         if active_only:
             query = query.filter(StudyPlan.is_active == True)
 
-        plans = query.order_by(StudyPlan.created_at.desc()).all()
+        plans = query.order_by(StudyPlan.created_at.desc()).limit(limit).offset(offset).all()
 
         # Enrich with resources
         result = []
@@ -470,6 +489,12 @@ async def update_study_plan(
 
         db.commit()
         db.refresh(plan)
+
+        # Invalidate analytics cache on plan completion or score updates
+        if (update_data.is_active is not None and not update_data.is_active) or \
+           update_data.after_score is not None or \
+           (update_data.completion_percentage is not None and update_data.completion_percentage >= 100):
+            cache_delete_pattern("analytics:*")
 
         # Send notification on plan completion
         if plan.completion_percentage >= 100 and plan.after_score is None:
@@ -613,6 +638,10 @@ async def mark_resource_complete(
             resource.helpful_rating = completion_data.helpful_rating
 
         db.commit()
+
+        # Invalidate analytics cache on resource completion
+        if completion_data.completed:
+            cache_delete_pattern("analytics:*")
 
         return {"message": "Resource marked as complete"}
 
@@ -831,7 +860,9 @@ async def generate_audio(
     operation_id="upload_document_to_library",
     summary="Upload a document directly to the learning library",
 )
+@limiter.limit("10/hour")
 async def upload_to_library(
+    request: Request,
     file: UploadFile = File(...),
     topic: str = Form(...),
     course_id: str = Form(...),
@@ -864,21 +895,42 @@ async def upload_to_library(
                 detail=f"Unsupported file type: .{file_ext}. Only PDF and PPTX are supported."
             )
 
-        # Validate file size (10MB max)
-        file_content = await file.read()
-        file_size = len(file_content)
-        if file_size > 10 * 1024 * 1024:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File too large. Maximum size is 10MB."
-            )
+        # Read file in chunks with size limit to prevent OOM on oversized uploads
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        chunks = []
+        total_size = 0
+        while True:
+            chunk = await file.read(8192)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            if total_size > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="File too large. Maximum size is 10MB."
+                )
+            chunks.append(chunk)
+        file_content = b"".join(chunks)
+        file_size = total_size
 
-        # Verify course exists and user is enrolled
+        # Verify course exists
         course = db.query(Course).filter(Course.id == course_id).first()
         if not course:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Course not found"
+            )
+
+        # Verify user is enrolled in this course
+        from app.models.course import UserCourse
+        enrollment = db.query(UserCourse).filter(
+            UserCourse.user_id == current_user.id,
+            UserCourse.course_id == course_id
+        ).first()
+        if not enrollment:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You must be enrolled in this course to upload documents"
             )
 
         # Extract text from document
@@ -900,8 +952,8 @@ async def upload_to_library(
             finally:
                 try:
                     os.unlink(temp_file_path)
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp file: {e}")
         except Exception as e:
             logger.warning(f"⚠️ Text extraction failed: {e}, continuing without text")
 
@@ -930,12 +982,28 @@ async def upload_to_library(
 
         if library_result.get("success"):
             logger.info(f"✅ Document uploaded to library: {library_result.get('library_document_id')}")
-            return {
+            cache_delete_pattern("library:browse:*")
+            cache_delete_pattern("library:stats*")
+            cache_delete_pattern(f"library:contributions:{current_user.id}")
+
+            doc = library_result.get("document", {})
+            scan_status = doc.get("scan_status", "clean")
+
+            if scan_status == "clean":
+                msg = f"Document uploaded successfully! {('It is now available to other students.' if is_public else 'It is saved as private.')}"
+            else:
+                msg = "Document uploaded successfully! It is pending security review and will be available to other students once verified."
+
+            response = {
                 "success": True,
-                "message": f"Document uploaded successfully! {('It is now available to other students.' if is_public else 'It is saved as private.')}",
+                "message": msg,
                 "document_id": library_result.get("library_document_id"),
-                "is_duplicate": False
+                "is_duplicate": False,
+                "scan_status": scan_status
             }
+            if library_result.get("relevance_warning"):
+                response["relevance_warning"] = library_result["relevance_warning"]
+            return response
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
