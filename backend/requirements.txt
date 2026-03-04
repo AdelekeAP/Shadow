@@ -68,8 +68,17 @@ python-json-logger==4.0.0
 slowapi==0.1.9
 redis==5.2.1
 
+# CGPA export
+fpdf2==2.8.3
+
 # Statistical analysis
 scipy==1.15.2
+
+# Error tracking
+sentry-sdk[fastapi]==2.19.2
+
+# Virus scanning
+pyclamd==0.4.0
 
 # Testing & Quality
 pytest==8.3.5
