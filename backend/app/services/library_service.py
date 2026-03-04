@@ -457,7 +457,8 @@ def browse_library(
             joinedload(LibraryDocument.course),
             joinedload(LibraryDocument.uploader)
         ).filter(
-            LibraryDocument.is_public == True
+            LibraryDocument.is_public == True,
+            LibraryDocument.scan_status == "clean"
         )
 
         # Filter by course

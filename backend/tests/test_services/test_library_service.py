@@ -485,3 +485,67 @@ class TestContributeToLibraryWithScan:
             LibraryDocument.id == result["library_document_id"]
         ).first()
         assert doc.scan_status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# browse_library — scan_status filtering
+# ---------------------------------------------------------------------------
+
+class TestBrowseLibraryWithScanStatus:
+
+    def test_pending_docs_hidden_from_browse(self, db_session, test_user, test_course):
+        doc = LibraryDocument(
+            course_id=test_course.id,
+            topic="Pending Scan Doc",
+            file_name="pending.pdf",
+            file_path="library/pending.pdf",
+            file_type="pdf",
+            file_size=1024,
+            content_hash="d" * 64,
+            uploaded_by=test_user.id,
+            is_public=True,
+            scan_status="pending",
+        )
+        db_session.add(doc)
+        db_session.commit()
+
+        result = browse_library(db_session)
+        assert result["total"] == 0
+
+    def test_clean_docs_visible_in_browse(self, db_session, test_user, test_course):
+        doc = LibraryDocument(
+            course_id=test_course.id,
+            topic="Clean Doc",
+            file_name="clean.pdf",
+            file_path="library/clean.pdf",
+            file_type="pdf",
+            file_size=1024,
+            content_hash="e" * 64,
+            uploaded_by=test_user.id,
+            is_public=True,
+            scan_status="clean",
+        )
+        db_session.add(doc)
+        db_session.commit()
+
+        result = browse_library(db_session)
+        assert result["total"] == 1
+
+    def test_infected_docs_hidden_from_browse(self, db_session, test_user, test_course):
+        doc = LibraryDocument(
+            course_id=test_course.id,
+            topic="Infected Doc",
+            file_name="infected.pdf",
+            file_path="library/infected.pdf",
+            file_type="pdf",
+            file_size=1024,
+            content_hash="f" * 64,
+            uploaded_by=test_user.id,
+            is_public=True,
+            scan_status="infected",
+        )
+        db_session.add(doc)
+        db_session.commit()
+
+        result = browse_library(db_session)
+        assert result["total"] == 0
