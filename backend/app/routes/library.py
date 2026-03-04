@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from uuid import UUID
 import logging
 import os
 
@@ -14,6 +15,7 @@ from app.models.user import User
 from app.models.library import LibraryDocument
 from app.schemas.library import (
     LibraryDocumentResponse,
+    LibraryBrowseResponse,
     VoteRequest,
     LibraryBrowseRequest,
     UserContributionsResponse
@@ -25,22 +27,37 @@ from app.services.library_service import (
     increment_download_count,
     get_user_contributions
 )
-from app.routes.auth import get_current_user
+from app.utils.auth import get_current_user
+from app.services.cache_service import cache_get, cache_set, cache_delete_pattern
 
 router = APIRouter(prefix="/library", tags=["library"])
 logger = logging.getLogger(__name__)
 
 
+def _validate_uuid(value: str, name: str = "ID") -> str:
+    """Validate that a string is a valid UUID format."""
+    try:
+        UUID(value)
+        return value
+    except (ValueError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {name} format"
+        )
+
+
 @router.get(
     "/browse",
-    response_model=List[LibraryDocumentResponse],
+    response_model=LibraryBrowseResponse,
     operation_id="browse_library",
     summary="Browse library documents with optional filters",
 )
 async def browse_library_documents(
     course_id: Optional[str] = Query(None, description="Filter by course UUID"),
     week_number: Optional[int] = Query(None, ge=1, le=15, description="Filter by week (1-15)"),
-    search: Optional[str] = Query(None, description="Search in topic or filename"),
+    file_type: Optional[str] = Query(None, description="Filter by file type (pdf, pptx, ppt)"),
+    search: Optional[str] = Query(None, description="Search in topic, filename, or content"),
+    sort_by: Optional[str] = Query("helpful", description="Sort order: helpful, newest, oldest, name, size_asc, size_desc"),
     limit: int = Query(50, ge=1, le=100, description="Max results per page"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: Session = Depends(get_db),
@@ -52,24 +69,52 @@ async def browse_library_documents(
     **Filters:**
     - `course_id`: Filter by specific course
     - `week_number`: Filter by week (1-15)
-    - `search`: Search in topic or filename
+    - `file_type`: Filter by file type (pdf, pptx, ppt)
+    - `search`: Search in topic, filename, or document content
+    - `sort_by`: Sort order (helpful, newest, oldest, name, size_asc, size_desc)
     - `limit`: Max results (default 50, max 100)
     - `offset`: Pagination offset
 
-    **Returns:** List of public library documents sorted by helpfulness
+    **Returns:** Paginated library documents sorted by chosen order
     """
     try:
-        documents = browse_library(
+        if course_id:
+            _validate_uuid(course_id, "course_id")
+
+        # Validate file_type if provided
+        if file_type and file_type.lower() not in ('pdf', 'pptx', 'ppt'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file_type. Must be one of: pdf, pptx, ppt"
+            )
+
+        # Validate sort_by if provided
+        valid_sorts = ('helpful', 'newest', 'oldest', 'name', 'size_asc', 'size_desc')
+        if sort_by and sort_by.lower() not in valid_sorts:
+            sort_by = 'helpful'
+
+        # Check cache first
+        cache_key = f"library:browse:{course_id}:{week_number}:{file_type}:{search}:{sort_by}:{limit}:{offset}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        result = browse_library(
             db=db,
             course_id=course_id,
             week_number=week_number,
+            file_type=file_type,
             search_query=search,
+            sort_by=sort_by or 'helpful',
             limit=limit,
             offset=offset
         )
 
-        return documents
+        cache_set(cache_key, result, ttl=300)
+        return result
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error browsing library: {e}")
         raise HTTPException(
@@ -95,6 +140,8 @@ async def get_library_document(
     Increments view count automatically.
     """
     try:
+        _validate_uuid(document_id, "document_id")
+
         document = db.query(LibraryDocument).filter(
             LibraryDocument.id == document_id
         ).first()
@@ -112,8 +159,17 @@ async def get_library_document(
                 detail="You don't have access to this document"
             )
 
+        # Block public access to unscanned documents
+        if document.scan_status != "clean" and str(document.uploaded_by) != str(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This document is pending security review"
+            )
+
         # Increment view count
         increment_view_count(db, document_id)
+        cache_delete_pattern("library:browse:*")
+        cache_delete_pattern(f"library:contributions:{document.uploaded_by}")
 
         return document.to_dict()
 
@@ -148,6 +204,8 @@ async def vote_on_library_document(
     **Note:** One vote per user per document. Updates existing vote if already voted.
     """
     try:
+        _validate_uuid(document_id, "document_id")
+
         # Check if document exists
         document = db.query(LibraryDocument).filter(
             LibraryDocument.id == document_id
@@ -187,6 +245,11 @@ async def vote_on_library_document(
                 detail="Failed to record vote"
             )
 
+        # Invalidate caches affected by votes
+        cache_delete_pattern("library:browse:*")
+        cache_delete_pattern("library:stats*")
+        cache_delete_pattern(f"library:contributions:{document.uploaded_by}")
+
         return {
             "success": True,
             "message": f"Vote recorded: {'👍 Helpful' if vote_data.vote_value == 1 else '👎 Not helpful'}"
@@ -219,6 +282,8 @@ async def view_library_document(
     Increments view count.
     """
     try:
+        _validate_uuid(document_id, "document_id")
+
         document = db.query(LibraryDocument).filter(
             LibraryDocument.id == document_id
         ).first()
@@ -234,6 +299,13 @@ async def view_library_document(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have access to this document"
+            )
+
+        # Block public access to unscanned documents
+        if document.scan_status != "clean" and str(document.uploaded_by) != str(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This document is pending security review"
             )
 
         # For PPTX files, serve the converted PDF if available
@@ -269,6 +341,8 @@ async def view_library_document(
 
         # Increment view count
         increment_view_count(db, document_id)
+        cache_delete_pattern("library:browse:*")
+        cache_delete_pattern(f"library:contributions:{document.uploaded_by}")
 
         # Return file for inline viewing
         return FileResponse(
@@ -305,6 +379,8 @@ async def download_library_document(
     Increments download count and returns the file.
     """
     try:
+        _validate_uuid(document_id, "document_id")
+
         document = db.query(LibraryDocument).filter(
             LibraryDocument.id == document_id
         ).first()
@@ -322,6 +398,13 @@ async def download_library_document(
                 detail="You don't have access to this document"
             )
 
+        # Block public access to unscanned documents
+        if document.scan_status != "clean" and str(document.uploaded_by) != str(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This document is pending security review"
+            )
+
         # Check if file exists
         if not os.path.exists(document.file_path):
             logger.error(f"❌ File not found on disk: {document.file_path}")
@@ -332,6 +415,8 @@ async def download_library_document(
 
         # Increment download count
         increment_download_count(db, document_id)
+        cache_delete_pattern("library:browse:*")
+        cache_delete_pattern(f"library:contributions:{document.uploaded_by}")
 
         # Return file
         return FileResponse(
@@ -371,7 +456,15 @@ async def get_my_contributions(
     - List of uploaded documents with stats
     """
     try:
+        # Check cache first
+        cache_key = f"library:contributions:{current_user.id}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         stats = get_user_contributions(db, str(current_user.id))
+
+        cache_set(cache_key, stats, ttl=300)
         return stats
 
     except Exception as e:
@@ -401,7 +494,14 @@ async def get_library_stats(
     - Most helpful documents
     """
     try:
+        # Check cache first
+        cache_key = "library:stats"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         from sqlalchemy import func, desc
+        from sqlalchemy.orm import joinedload
 
         # Total documents
         total_docs = db.query(func.count(LibraryDocument.id)).filter(
@@ -427,14 +527,17 @@ async def get_library_stats(
             desc('doc_count')
         ).limit(5).all()
 
-        # Most helpful documents
-        helpful_docs = db.query(LibraryDocument).filter(
+        # Most helpful documents (eager-load relationships for to_dict)
+        helpful_docs = db.query(LibraryDocument).options(
+            joinedload(LibraryDocument.course),
+            joinedload(LibraryDocument.uploader)
+        ).filter(
             LibraryDocument.is_public == True
         ).order_by(
             desc(LibraryDocument.helpful_votes)
         ).limit(5).all()
 
-        return {
+        result = {
             "total_documents": total_docs,
             "total_contributors": total_contributors,
             "popular_courses": [
@@ -443,6 +546,9 @@ async def get_library_stats(
             ],
             "most_helpful_documents": [doc.to_dict() for doc in helpful_docs]
         }
+
+        cache_set(cache_key, result, ttl=600)
+        return result
 
     except Exception as e:
         logger.error(f"❌ Error getting library stats: {e}")
