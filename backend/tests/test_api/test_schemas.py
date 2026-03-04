@@ -30,7 +30,7 @@ class TestUserCreateSchema:
     def test_minimum_required_fields(self):
         user = UserCreate(
             email="minimal@pau.edu.ng",
-            password="12345678",
+            password="TestPass1",
             full_name="Jo",
         )
         assert user.email == "minimal@pau.edu.ng"
@@ -54,24 +54,27 @@ class TestUserCreateSchema:
     def test_password_exactly_8_chars(self):
         user = UserCreate(
             email="test@pau.edu.ng",
-            password="exactly8",
+            password="Exact1xx",
             full_name="Test",
         )
         assert len(user.password) == 8
 
-    def test_password_100_chars_max(self):
+    def test_password_72_chars_max(self):
+        # 72-char password meeting complexity: starts with "Aa1" then padded
+        password_72 = "Aa1" + "x" * 69  # 3 + 69 = 72 chars
         user = UserCreate(
             email="test@pau.edu.ng",
-            password="a" * 100,
+            password=password_72,
             full_name="Test",
         )
-        assert len(user.password) == 100
+        assert len(user.password) == 72
 
-    def test_password_over_100_chars_raises(self):
+    def test_password_over_72_chars_raises(self):
+        password_73 = "Aa1" + "x" * 70  # 3 + 70 = 73 chars
         with pytest.raises(ValidationError):
             UserCreate(
                 email="test@pau.edu.ng",
-                password="a" * 101,
+                password=password_73,
                 full_name="Test",
             )
 
@@ -88,7 +91,7 @@ class TestUserCreateSchema:
         for level in valid:
             user = UserCreate(
                 email="test@pau.edu.ng",
-                password="12345678",
+                password="TestPass1",
                 full_name="Test",
                 entry_level=level,
             )
@@ -106,7 +109,7 @@ class TestUserCreateSchema:
     def test_target_cgpa_range(self):
         user = UserCreate(
             email="test@pau.edu.ng",
-            password="12345678",
+            password="TestPass1",
             full_name="Test",
             target_cgpa=5.0,
         )
@@ -133,7 +136,7 @@ class TestUserCreateSchema:
     def test_optional_fields_default_to_none(self):
         user = UserCreate(
             email="test@pau.edu.ng",
-            password="12345678",
+            password="TestPass1",
             full_name="Test",
         )
         assert user.university_id is None
@@ -143,7 +146,7 @@ class TestUserCreateSchema:
     def test_entry_level_defaults_to_400L(self):
         user = UserCreate(
             email="test@pau.edu.ng",
-            password="12345678",
+            password="TestPass1",
             full_name="Test",
         )
         assert user.entry_level == "400L"
@@ -196,3 +199,13 @@ class TestUserResponseSchema:
         response_dict = response.model_dump()
         assert "password" not in response_dict
         assert "password_hash" not in response_dict
+
+
+# ===================================================================
+# LibraryDocumentResponse schema validation
+# ===================================================================
+
+def test_library_document_response_includes_scan_status():
+    from app.schemas.library import LibraryDocumentResponse
+    fields = LibraryDocumentResponse.model_fields
+    assert "scan_status" in fields
