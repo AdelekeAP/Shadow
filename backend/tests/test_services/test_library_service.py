@@ -12,12 +12,14 @@ function arguments that feed into SQLAlchemy filter clauses.
 """
 import uuid
 import pytest
+from unittest.mock import patch
 
 from app.models.library import LibraryDocument, LibraryVote
 from app.services.library_service import (
     calculate_file_hash,
     check_duplicate_document,
     check_content_course_relevance,
+    contribute_to_library,
     sanitize_filename,
     validate_file_magic_bytes,
     browse_library,
@@ -426,3 +428,60 @@ class TestScanStatusColumn:
     def test_scan_status_in_to_dict(self, db_session, library_doc):
         d = library_doc.to_dict()
         assert "scan_status" in d
+
+
+class TestContributeToLibraryWithScan:
+
+    @patch("app.services.library_service.scan_bytes")
+    def test_clean_file_gets_clean_status(self, mock_scan, db_session, test_user, test_course):
+        mock_scan.return_value = {"status": "clean", "threat": None}
+        result = contribute_to_library(
+            db=db_session,
+            user_id=str(test_user.id),
+            course_id=str(test_course.id),
+            topic="Clean Doc",
+            file_content=b"%PDF-1.4 clean content",
+            file_name="clean.pdf",
+            file_type="pdf",
+            extracted_text="some text",
+        )
+        assert result["success"] is True
+        doc = db_session.query(LibraryDocument).filter(
+            LibraryDocument.id == result["library_document_id"]
+        ).first()
+        assert doc.scan_status == "clean"
+
+    @patch("app.services.library_service.scan_bytes")
+    def test_infected_file_rejected(self, mock_scan, db_session, test_user, test_course):
+        mock_scan.return_value = {"status": "infected", "threat": "Win.Test.EICAR"}
+        result = contribute_to_library(
+            db=db_session,
+            user_id=str(test_user.id),
+            course_id=str(test_course.id),
+            topic="Bad Doc",
+            file_content=b"%PDF-1.4 bad content",
+            file_name="bad.pdf",
+            file_type="pdf",
+            extracted_text="bad text",
+        )
+        assert result["success"] is False
+        assert "malware" in result["error"].lower() or "infected" in result["error"].lower()
+
+    @patch("app.services.library_service.scan_bytes")
+    def test_pending_scan_still_saves(self, mock_scan, db_session, test_user, test_course):
+        mock_scan.return_value = {"status": "pending", "threat": None}
+        result = contribute_to_library(
+            db=db_session,
+            user_id=str(test_user.id),
+            course_id=str(test_course.id),
+            topic="Pending Doc",
+            file_content=b"%PDF-1.4 pending content",
+            file_name="pending.pdf",
+            file_type="pdf",
+            extracted_text="some text",
+        )
+        assert result["success"] is True
+        doc = db_session.query(LibraryDocument).filter(
+            LibraryDocument.id == result["library_document_id"]
+        ).first()
+        assert doc.scan_status == "pending"
