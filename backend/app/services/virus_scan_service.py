@@ -6,6 +6,7 @@ When ClamAV is unavailable, files are quarantined (scan_status='pending')
 rather than rejected, so SmartStudy uploads still work.
 """
 import logging
+import os
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,10 @@ def _get_clamd() -> Optional[Any]:
     """Get a ClamAV daemon connection, or None if unavailable."""
     try:
         import pyclamd
+    except ImportError:
+        return None
+
+    try:
         cd = pyclamd.ClamdUnixSocket()
         if cd.ping():
             return cd
@@ -22,7 +27,6 @@ def _get_clamd() -> Optional[Any]:
         pass
 
     try:
-        import pyclamd
         cd = pyclamd.ClamdNetworkSocket()
         if cd.ping():
             return cd
@@ -103,7 +107,6 @@ def scan_pending_documents(db) -> Dict[str, int]:
 
     for doc in pending_docs:
         try:
-            import os
             if not os.path.exists(doc.file_path):
                 logger.warning(f"File missing for document {doc.id}: {doc.file_path}")
                 counts["failed"] += 1
