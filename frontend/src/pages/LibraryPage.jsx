@@ -113,9 +113,13 @@ function UploadModal({ onClose, onSuccess }) {
   const [weekNum, setWeekNum] = useState('')
   const [isPublic, setIsPublic] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
+  const [scanStatus, setScanStatus] = useState(null)
+  const [relevanceWarning, setRelevanceWarning] = useState(null)
   const [entering, setEntering] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
   const backdropRef = useRef(null)
 
   useEffect(() => {
@@ -125,26 +129,56 @@ function UploadModal({ onClose, onSuccess }) {
 
   const close = () => { setEntering(false); setTimeout(onClose, 200) }
 
-  const handleFile = (e) => {
-    const f = e.target.files[0]
+  const VALID_MIME_TYPES = ['application/pdf', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation']
+  const VALID_EXTENSIONS = ['.pdf', '.pptx', '.ppt']
+
+  const validateAndSetFile = (f) => {
     if (!f) return
-    const validTypes = ['application/pdf', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation']
-    if (!validTypes.includes(f.type)) { setError('Only PDF and PowerPoint files are supported.'); return }
+    const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase()
+    if (!VALID_MIME_TYPES.includes(f.type) && !VALID_EXTENSIONS.includes(ext)) {
+      setError('Only PDF and PowerPoint files are supported.')
+      return
+    }
     if (f.size > 10 * 1024 * 1024) { setError('Maximum file size is 10 MB.'); return }
     setFile(f)
     setError(null)
   }
 
+  const handleFile = (e) => validateAndSetFile(e.target.files[0])
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+    validateAndSetFile(e.dataTransfer.files[0])
+  }
+
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true) }
+  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false) }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!file || !topic || !courseId) { setError('Please fill in all required fields.'); return }
     setUploading(true)
+    setUploadProgress(0)
     setError(null)
     try {
-      await uploadToLibrary({ file, topic, courseId, weekNumber: weekNum ? parseInt(weekNum) : null, isPublic })
+      const result = await uploadToLibrary({
+        file, topic, courseId,
+        weekNumber: weekNum ? parseInt(weekNum) : null,
+        isPublic,
+        onProgress: (pct) => setUploadProgress(pct)
+      })
+      setUploadProgress(100)
       setSuccess(true)
+      setScanStatus(result?.scan_status || 'clean')
+      if (result?.relevance_warning) {
+        setRelevanceWarning(result.relevance_warning)
+      }
       onSuccess()
-      setTimeout(close, 1800)
+      const isPending = result?.scan_status && result.scan_status !== 'clean'
+      if (!result?.relevance_warning && !isPending) {
+        setTimeout(close, 1800)
+      }
     } catch (err) {
       setError(err.detail || 'Failed to upload. Please try again.')
     } finally { setUploading(false) }
@@ -181,12 +215,35 @@ function UploadModal({ onClose, onSuccess }) {
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
 
           {/* Success */}
-          {success && (
+          {success && scanStatus === 'clean' && (
             <div className="px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200/60 flex items-center gap-2.5">
               <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
               </svg>
               <span className="text-[12px] font-semibold text-emerald-700">Uploaded successfully{isPublic ? ' — now available to other students' : ''}.</span>
+            </div>
+          )}
+
+          {/* Pending security review */}
+          {success && scanStatus && scanStatus !== 'clean' && (
+            <div className="px-4 py-3 rounded-xl bg-amber-50 border border-amber-200/60 flex items-center gap-2.5">
+              <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008v.008H12v-.008Zm9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+              <span className="text-[12px] font-semibold text-amber-700">Uploaded successfully. Your document is pending security review and will be available to other students once verified.</span>
+            </div>
+          )}
+
+          {/* Relevance Warning */}
+          {relevanceWarning && (
+            <div className="px-4 py-3 rounded-xl bg-amber-50 border border-amber-200/60 flex items-start gap-2.5">
+              <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+              <div>
+                <span className="text-[12px] font-semibold text-amber-700">{relevanceWarning}</span>
+                <button onClick={close} className="block mt-1.5 text-[11px] font-medium text-amber-600 underline hover:text-amber-800">Dismiss & close</button>
+              </div>
             </div>
           )}
 
@@ -208,25 +265,41 @@ function UploadModal({ onClose, onSuccess }) {
             </label>
             <label
               htmlFor="file-upload-input"
-              className={`block cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition-all hover:border-navy-300 hover:bg-navy-50/30 ${
-                file ? 'border-emerald-300 bg-emerald-50/30' : 'border-surface-200'
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`block cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition-all duration-200 ${
+                isDragging
+                  ? 'border-indigo-500 bg-indigo-50/10 scale-[1.01]'
+                  : file
+                    ? 'border-emerald-300 bg-emerald-50/30 hover:border-navy-300 hover:bg-navy-50/30'
+                    : 'border-surface-200 hover:border-navy-300 hover:bg-navy-50/30'
               }`}
             >
               <input type="file" id="file-upload-input" accept=".pdf,.ppt,.pptx" onChange={handleFile} className="hidden" />
-              {file ? (
+              {isDragging ? (
+                <>
+                  <svg className="w-8 h-8 text-indigo-500 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                  </svg>
+                  <p className="text-[13px] font-semibold text-indigo-600">Drop your file here</p>
+                  <p className="text-[11px] text-indigo-400 mt-0.5">PDF or PowerPoint, max 10 MB</p>
+                </>
+              ) : file ? (
                 <>
                   <svg className="w-8 h-8 text-emerald-500 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                   </svg>
                   <p className="text-[13px] font-semibold text-navy-900">{file.name}</p>
-                  <p className="text-[11px] text-surface-400 mt-0.5">{fmtSize(file.size)} — click to replace</p>
+                  <p className="text-[11px] text-surface-400 mt-0.5">{fmtSize(file.size)} — click or drop to replace</p>
                 </>
               ) : (
                 <>
                   <svg className="w-8 h-8 text-surface-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
                   </svg>
-                  <p className="text-[13px] font-medium text-navy-800">Click to upload</p>
+                  <p className="text-[13px] font-medium text-navy-800">Drag & drop or click to upload</p>
                   <p className="text-[11px] text-surface-300 mt-0.5">PDF or PowerPoint, max 10 MB</p>
                 </>
               )}
@@ -300,16 +373,22 @@ function UploadModal({ onClose, onSuccess }) {
           <button type="button" onClick={close} disabled={uploading} className="flex-1 px-5 py-2.5 border border-surface-200 text-navy-700 rounded-xl text-[13px] font-semibold hover:bg-surface-50 transition-all disabled:opacity-40">
             Cancel
           </button>
-          <button onClick={handleSubmit} disabled={uploading || !file || !topic || !courseId} className="flex-1 px-5 py-2.5 bg-navy-800 hover:bg-navy-900 text-white rounded-xl text-[13px] font-semibold transition-all disabled:opacity-40 flex items-center justify-center gap-2">
+          <button onClick={handleSubmit} disabled={uploading || !file || !topic || !courseId} className="flex-1 px-5 py-2.5 bg-navy-800 hover:bg-navy-900 text-white rounded-xl text-[13px] font-semibold transition-all disabled:opacity-40 flex flex-col items-center justify-center gap-1 relative overflow-hidden">
             {uploading ? (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
               <>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Uploading{uploadProgress > 0 ? ` ${uploadProgress}%` : '...'}</span>
+                </div>
+                <div className="absolute bottom-0 left-0 h-1 bg-white/40 transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
                 </svg>
                 Upload
-              </>
+              </div>
             )}
           </button>
         </div>
