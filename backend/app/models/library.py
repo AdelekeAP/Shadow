@@ -2,10 +2,10 @@
 Library Models - Student-Powered Learning Library
 Stores course materials uploaded by students for shared learning
 """
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, ARRAY
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, ARRAY, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from app.database import Base
@@ -42,6 +42,7 @@ class LibraryDocument(Base):
     # Duplicate detection
     content_hash = Column(String(64), nullable=False, index=True)  # SHA-256 hash
     extracted_text = Column(Text, nullable=True)  # Full text for search
+    scan_status = Column(String(10), nullable=False, server_default="clean", default="clean")  # clean, infected, pending, error
     key_topics = Column(JSONB, nullable=True)  # ["BST", "Insertion", "Deletion"]
 
     # Metadata
@@ -55,8 +56,15 @@ class LibraryDocument(Base):
     helpful_votes = Column(Integer, default=0)  # Net upvotes (upvotes - downvotes)
 
     # Timestamps
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
-    last_accessed = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_accessed = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Performance indexes
+    __table_args__ = (
+        Index('ix_library_documents_uploaded_by', 'uploaded_by'),
+        Index('ix_library_documents_is_public_votes', 'is_public', 'helpful_votes'),
+        Index('ix_library_documents_course_week', 'course_id', 'week_number'),
+    )
 
     # Relationships
     course = relationship("Course", back_populates="library_documents")
@@ -80,6 +88,7 @@ class LibraryDocument(Base):
             "uploader_name": self.uploader.full_name if self.uploader else "Unknown",
             "is_public": self.is_public,
             "is_verified": self.is_verified,
+            "scan_status": self.scan_status,
             "view_count": self.view_count,
             "download_count": self.download_count,
             "helpful_votes": self.helpful_votes,
@@ -108,7 +117,12 @@ class LibraryVote(Base):
     vote_value = Column(Integer, nullable=False)  # +1 for upvote, -1 for downvote
 
     # Timestamp
-    voted_at = Column(DateTime, default=datetime.utcnow)
+    voted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # One vote per user per document — enforced at DB level
+    __table_args__ = (
+        UniqueConstraint('document_id', 'user_id', name='uq_library_votes_document_user'),
+    )
 
     # Relationships
     document = relationship("LibraryDocument", back_populates="votes")
