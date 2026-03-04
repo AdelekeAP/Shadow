@@ -49,6 +49,7 @@ class TestScanBytes:
 
         result = scan_bytes(b"%PDF-1.4 content")
         assert result["status"] == "error"
+        assert result["threat"] is None
 
 
 class TestGetScannerStatus:
