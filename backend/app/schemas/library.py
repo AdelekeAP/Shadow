@@ -22,6 +22,7 @@ class LibraryDocumentResponse(BaseModel):
     uploader_name: Optional[str] = None
     is_public: bool
     is_verified: bool
+    scan_status: Optional[str] = "clean"
     view_count: int
     download_count: int
     helpful_votes: int
@@ -44,6 +45,13 @@ class LibraryBrowseRequest(BaseModel):
     search_query: Optional[str] = None
     limit: int = Field(50, ge=1, le=100)
     offset: int = Field(0, ge=0)
+
+
+class LibraryBrowseResponse(BaseModel):
+    """Paginated response for library browse"""
+    documents: List[LibraryDocumentResponse]
+    total: int
+    has_more: bool
 
 
 class UserContributionsResponse(BaseModel):
