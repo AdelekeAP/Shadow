@@ -2,6 +2,7 @@
 SmartStudy Chat Endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
@@ -17,7 +18,10 @@ from app.schemas.smartstudy import (
     ChatConversationResponse,
     ChatConversationList,
 )
-from app.services.smartstudy_service import chat_with_smartstudy
+from app.services.smartstudy_service import (
+    chat_with_smartstudy,
+    stream_chat_with_smartstudy,
+)
 
 import logging
 
@@ -54,19 +58,59 @@ async def create_chat_message(
         )
 
         if "error" in result:
+            detail = {"message": result["error"]}
+            if "error_type" in result:
+                detail["error_type"] = result["error_type"]
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result["error"]
+                detail=detail
             )
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in create_chat_message: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail={"message": str(e), "error_type": "unknown"}
         )
+
+
+@router.post(
+    "/chat/stream",
+    operation_id="stream_chat_message",
+    summary="Send a message and receive SSE-streamed response",
+)
+@limiter.limit("10/minute")
+async def stream_chat_message(
+    request: Request,
+    message_data: ChatMessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Send a message to SmartStudy AI and receive a streaming SSE response.
+
+    Events: meta (conversation_id), token (content chunk), done, error.
+    """
+    generator = stream_chat_with_smartstudy(
+        db=db,
+        user_id=str(current_user.id),
+        message=message_data.content,
+        conversation_id=str(message_data.conversation_id) if message_data.conversation_id else None,
+    )
+
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(

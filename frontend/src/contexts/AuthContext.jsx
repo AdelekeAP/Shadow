@@ -4,6 +4,7 @@ import {
   register as apiRegister,
   logout as apiLogout,
   getCurrentUser,
+  fetchCurrentUser,
   isAuthenticated as checkAuth,
 } from '../services/api'
 
@@ -15,13 +16,24 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Restore user from localStorage on mount
-    const savedUser = getCurrentUser()
-    if (savedUser && token) {
-      setUser(savedUser)
+    const validateSession = async () => {
+      if (token) {
+        try {
+          // Validate token by fetching fresh user data from API
+          const userData = await fetchCurrentUser()
+          setUser(userData)
+        } catch {
+          // Token invalid or expired — clear local state
+          setToken(null)
+          setUser(null)
+          localStorage.removeItem('access_token')
+          localStorage.removeItem('user')
+        }
+      }
+      setLoading(false)
     }
-    setLoading(false)
-  }, [])
+    validateSession()
+  }, [token])
 
   const login = async (credentials) => {
     const data = await apiLogin(credentials)

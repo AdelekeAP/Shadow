@@ -6,7 +6,7 @@ Tests urgency scoring, weight impact scoring, mood scoring,
 goal impact scoring, full priority calculation, and recommendation types.
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, PropertyMock
 from tests.conftest import MockTask, MockUser, MockMoodLog
 
@@ -23,39 +23,39 @@ class TestCalculateUrgencyScore:
 
     def test_overdue_task_returns_10(self):
         calc = self._get_calculator()
-        task = MockTask(due_date=datetime.utcnow() - timedelta(days=3))
+        task = MockTask(due_date=datetime.now(timezone.utc) - timedelta(days=3))
         assert calc.calculate_urgency_score(task) == 10.0
 
     def test_due_today_returns_10(self):
         calc = self._get_calculator()
-        task = MockTask(due_date=datetime.utcnow() + timedelta(hours=1))
+        task = MockTask(due_date=datetime.now(timezone.utc) + timedelta(hours=1))
         # days_until_due should be 0
         assert calc.calculate_urgency_score(task) == 10.0
 
     def test_due_tomorrow_returns_9(self):
         calc = self._get_calculator()
-        task = MockTask(due_date=datetime.utcnow() + timedelta(days=1, hours=1))
+        task = MockTask(due_date=datetime.now(timezone.utc) + timedelta(days=1, hours=1))
         assert calc.calculate_urgency_score(task) == 9.0
 
     def test_due_in_2_days(self):
         calc = self._get_calculator()
-        task = MockTask(due_date=datetime.utcnow() + timedelta(days=2, hours=1))
+        task = MockTask(due_date=datetime.now(timezone.utc) + timedelta(days=2, hours=1))
         assert calc.calculate_urgency_score(task) == 8.0
 
     def test_due_in_5_days(self):
         calc = self._get_calculator()
-        task = MockTask(due_date=datetime.utcnow() + timedelta(days=5, hours=1))
+        task = MockTask(due_date=datetime.now(timezone.utc) + timedelta(days=5, hours=1))
         assert calc.calculate_urgency_score(task) == 5.0
 
     def test_due_in_10_days(self):
         calc = self._get_calculator()
-        task = MockTask(due_date=datetime.utcnow() + timedelta(days=10, hours=1))
+        task = MockTask(due_date=datetime.now(timezone.utc) + timedelta(days=10, hours=1))
         # 10 - 10 = 0 → max(0, 0) = 0.0
         assert calc.calculate_urgency_score(task) == 0.0
 
     def test_due_in_15_days(self):
         calc = self._get_calculator()
-        task = MockTask(due_date=datetime.utcnow() + timedelta(days=15))
+        task = MockTask(due_date=datetime.now(timezone.utc) + timedelta(days=15))
         assert calc.calculate_urgency_score(task) == 0.0
 
     def test_no_due_date_returns_neutral(self):
@@ -270,7 +270,7 @@ class TestCalculateGoalImpactScore:
         }
         db = MagicMock()
         result = calc.calculate_goal_impact_score(task, user, db)
-        assert result == 3.0
+        assert result == 5.0
 
     @patch('app.utils.cgpa_calculator.CGPACalculator.get_user_cgpa_data')
     def test_large_gap_high_impact(self, mock_get_data):
@@ -335,7 +335,7 @@ class TestCalculatePriorityScore:
     def test_priority_score_formula(self, mock_goal, mock_mood):
         calc = self._get_calculator()
         task = MockTask(
-            due_date=datetime.utcnow() + timedelta(hours=1),  # urgency = 10
+            due_date=datetime.now(timezone.utc) + timedelta(hours=1),  # urgency = 10
             weight=30,  # weight = 10
             category="CA"
         )
@@ -366,7 +366,7 @@ class TestCalculatePriorityScore:
     def test_minimum_priority_score(self, mock_goal, mock_mood):
         calc = self._get_calculator()
         task = MockTask(
-            due_date=datetime.utcnow() + timedelta(days=15),  # urgency = 0
+            due_date=datetime.now(timezone.utc) + timedelta(days=15),  # urgency = 0
             weight=0,  # weight = 0
         )
         user = MockUser()

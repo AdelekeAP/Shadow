@@ -26,6 +26,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True)
+    failed_login_attempts = Column(Integer, default=0)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    token_version = Column(Integer, default=0)
 
     # Relationships
     library_contributions = relationship("LibraryDocument", back_populates="uploader")

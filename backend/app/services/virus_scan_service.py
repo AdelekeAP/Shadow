@@ -127,6 +127,15 @@ def scan_pending_documents(db) -> Dict[str, int]:
                 doc.scan_status = "infected"
                 counts["infected"] += 1
                 logger.warning(f"INFECTED document found: {doc.id} - {result['threat']}")
+                # Quarantine: remove the infected file from library storage
+                try:
+                    if os.path.exists(doc.file_path):
+                        os.remove(doc.file_path)
+                        logger.info(f"Infected file removed: {doc.file_path}")
+                    if doc.converted_pdf_path and os.path.exists(doc.converted_pdf_path):
+                        os.remove(doc.converted_pdf_path)
+                except Exception as rm_err:
+                    logger.error(f"Failed to remove infected file {doc.file_path}: {rm_err}")
             else:
                 counts["failed"] += 1
 

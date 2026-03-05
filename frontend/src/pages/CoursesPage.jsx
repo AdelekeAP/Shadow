@@ -41,7 +41,8 @@ export default function CoursesPage() {
       setEnrolledCourses(enrolled)
       setSemesters(semData)
       setActiveSem(activeData.semester)
-    } catch {
+    } catch (e) {
+      console.error('Load courses error:', e)
       showToast('Failed to load courses', 'error')
     } finally { setLoading(false) }
   }
@@ -104,7 +105,8 @@ export default function CoursesPage() {
       setSemesters(semData)
       setActiveSem(activeData.semester)
       showToast('Active semester updated')
-    } catch {
+    } catch (e) {
+      console.error('Switch semester error:', e)
       showToast('Failed to switch semester', 'error')
     }
   }
@@ -117,7 +119,8 @@ export default function CoursesPage() {
       const enrolled = await getEnrolledCourses(false)
       setEnrolledCourses(enrolled)
       showToast(`${unassigned.length} course${unassigned.length > 1 ? 's' : ''} assigned`)
-    } catch {
+    } catch (e) {
+      console.error('Assign courses error:', e)
       showToast('Failed to assign courses', 'error')
     }
   }

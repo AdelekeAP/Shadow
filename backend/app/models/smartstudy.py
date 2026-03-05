@@ -2,7 +2,7 @@
 SmartStudy Models - AI Learning Intervention System
 Includes chat conversations, study plans, resources, and effectiveness tracking
 """
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, Boolean, Text, ForeignKey, Date
+from sqlalchemy import Column, Index, String, Integer, Numeric, DateTime, Boolean, Text, ForeignKey, Date
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -147,6 +147,9 @@ class StudyPlanResource(Base):
     Study Plan Resource - Individual learning resource in a study plan
     """
     __tablename__ = "study_plan_resources"
+    __table_args__ = (
+        Index('ix_spr_plan_day_order', 'study_plan_id', 'day_number', 'order_in_day'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     study_plan_id = Column(UUID(as_uuid=True), ForeignKey('study_plans.id', ondelete='CASCADE'), nullable=False, index=True)

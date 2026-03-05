@@ -7,7 +7,7 @@ import os
 import logging
 import hashlib
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -190,7 +190,7 @@ def get_cached_articles(topic: str, db=None) -> Optional[List[Dict]]:
     # In-memory cache
     if cache_key in _article_cache:
         entry = _article_cache[cache_key]
-        if datetime.utcnow() < entry["expires_at"]:
+        if datetime.now(timezone.utc) < entry["expires_at"]:
             logger.debug(f"Article cache hit for '{topic}'")
             return entry["articles"]
         else:
@@ -203,7 +203,7 @@ def get_cached_articles(topic: str, db=None) -> Optional[List[Dict]]:
             cached = db.query(CuratedResource).filter(
                 CuratedResource.topic == topic.lower(),
                 CuratedResource.resource_type == "article",
-                CuratedResource.cache_expires_at > datetime.utcnow(),
+                CuratedResource.cache_expires_at > datetime.now(timezone.utc),
             ).order_by(CuratedResource.quality_score.desc()).limit(5).all()
 
             if cached:
@@ -218,7 +218,7 @@ def get_cached_articles(topic: str, db=None) -> Optional[List[Dict]]:
                 # Also populate in-memory cache
                 _article_cache[cache_key] = {
                     "articles": articles,
-                    "expires_at": datetime.utcnow() + _CACHE_TTL,
+                    "expires_at": datetime.now(timezone.utc) + _CACHE_TTL,
                 }
                 logger.debug(f"Article DB cache hit for '{topic}': {len(articles)} results")
                 return articles
@@ -231,7 +231,7 @@ def get_cached_articles(topic: str, db=None) -> Optional[List[Dict]]:
 def cache_articles(topic: str, articles: List[Dict], db=None):
     """Store articles in both in-memory and DB cache."""
     cache_key = hashlib.md5(topic.lower().encode()).hexdigest()
-    expires_at = datetime.utcnow() + _CACHE_TTL
+    expires_at = datetime.now(timezone.utc) + _CACHE_TTL
 
     # In-memory
     _article_cache[cache_key] = {
@@ -253,7 +253,7 @@ def cache_articles(topic: str, articles: List[Dict], db=None):
                 if existing:
                     existing.quality_score = article["quality_score"]
                     existing.cache_expires_at = expires_at
-                    existing.updated_at = datetime.utcnow()
+                    existing.updated_at = datetime.now(timezone.utc)
                 else:
                     resource = CuratedResource(
                         topic=topic.lower(),

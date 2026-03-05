@@ -2,19 +2,34 @@
 Mood Logging API Routes
 """
 import logging
+import os
+import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 from uuid import UUID
 
 from app.database import get_db
 from app.models.user import User
 from app.models.mood import MoodLog
-from app.routes.auth import get_current_user
+from app.utils.auth import get_current_user
 from app.services.sentiment_analysis import analyze_sentiment
+
+
+def _sanitize_text(text: str) -> str:
+    """Strip HTML tags and dangerous patterns from user input to prevent XSS."""
+    if not text:
+        return text
+    # Remove HTML tags
+    cleaned = re.sub(r'<[^>]+>', '', text)
+    # Remove javascript: protocol
+    cleaned = re.sub(r'javascript:', '', cleaned, flags=re.IGNORECASE)
+    # Remove event handlers
+    cleaned = re.sub(r'on\w+\s*=', '', cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -64,6 +79,22 @@ def log_mood(
                 detail=f"Invalid mood type. Must be one of: {', '.join(valid_moods)}"
             )
 
+        # Prevent duplicate mood logs within 15 seconds (spam protection)
+        # Skip in test environment to allow rapid mood logging in tests
+        if os.getenv("TESTING") != "true":
+            recent_log = db.query(MoodLog).filter(
+                MoodLog.user_id == current_user.id,
+                MoodLog.logged_at >= datetime.now(timezone.utc) - timedelta(seconds=15)
+            ).first()
+            if recent_log:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Please wait at least 15 seconds between mood logs"
+                )
+
+        # Sanitize note to prevent XSS
+        sanitized_note = _sanitize_text(mood_data.note) if mood_data.note else None
+
         # Categorize moods as positive or negative for mismatch detection
         positive_moods = ['focused', 'motivated', 'calm', 'confident']
         negative_moods = ['tired', 'stressed', 'anxious', 'overwhelmed']
@@ -71,8 +102,8 @@ def log_mood(
         # Analyze sentiment if note is provided
         sentiment_score = None
         sentiment_data = None
-        if mood_data.note and mood_data.note.strip():
-            sentiment_data = analyze_sentiment(mood_data.note)
+        if sanitized_note and sanitized_note.strip():
+            sentiment_data = analyze_sentiment(sanitized_note)
             if sentiment_data:
                 sentiment_score = sentiment_data['sentiment_score']
                 logger.debug("Sentiment analysis: %s", sentiment_data)
@@ -82,7 +113,7 @@ def log_mood(
             user_id=current_user.id,
             mood_type=mood_data.mood_type.lower(),
             energy_level=mood_data.energy_level,
-            note=mood_data.note,
+            note=sanitized_note,
             course_id=mood_data.course_id,
             task_id=mood_data.task_id,
             sentiment_score=sentiment_score
@@ -190,7 +221,7 @@ def get_mood_trends(
     """
     try:
         # Get moods from last N days
-        start_date = datetime.utcnow() - timedelta(days=days)
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         moods = db.query(MoodLog).filter(
             MoodLog.user_id == current_user.id,

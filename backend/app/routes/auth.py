@@ -1,24 +1,27 @@
 """
-Authentication Routes - Register, Login, Get Current User
+Authentication Routes - Register, Login, Logout, Get Current User
 """
+import asyncio
+from time import perf_counter
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token
+from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token, UserPreferencesUpdate
 from app.utils.auth import (
     get_password_hash,
     verify_password,
     create_access_token,
-    decode_access_token
+    decode_access_token,
+    get_current_user,
+    oauth2_scheme,
 )
+from app.utils.token_blacklist import blacklist_token
 from app.middleware.rate_limiter import limiter
 
 router = APIRouter()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 
 @router.post(
@@ -112,9 +115,13 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
     db.commit()
     db.refresh(new_user)
 
-    # Create access token
+    # Create access token with token version
     access_token = create_access_token(
-        data={"sub": new_user.email, "user_id": str(new_user.id)}
+        data={
+            "sub": new_user.email,
+            "user_id": str(new_user.id),
+            "token_version": new_user.token_version or 0,
+        }
     )
 
     # Convert user to response format
@@ -175,6 +182,14 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
                 }
             },
         },
+        423: {
+            "description": "Account locked due to too many failed login attempts.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Account locked. Try again in 15 minute(s)."}
+                }
+            },
+        },
     },
 )
 @limiter.limit("5/minute")
@@ -187,23 +202,53 @@ async def login(request: Request, credentials: UserLogin, db: Session = Depends(
 
     **Rate limit:** 5 requests per minute per client IP.
 
+    **Account lockout:** After 5 consecutive failed login attempts the account is
+    locked for 15 minutes.
+
     Include the returned token in subsequent requests:
     ```
     Authorization: Bearer <access_token>
     ```
     """
+    start = perf_counter()
+    try:
+        return await _do_login(credentials, db)
+    finally:
+        # Normalize response time to at least 200ms to prevent timing-based
+        # account enumeration (user-not-found vs wrong-password).
+        elapsed = perf_counter() - start
+        if elapsed < 0.2:
+            await asyncio.sleep(0.2 - elapsed)
+
+
+async def _do_login(credentials: UserLogin, db: Session) -> Token:
+    """Internal login logic, separated for constant-time wrapper."""
     # Find user by email
     user = db.query(User).filter(User.email == credentials.email).first()
 
     if not user:
+        # Run a dummy hash to keep timing consistent
+        verify_password("dummy", get_password_hash("dummy"))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Check account lockout
+    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+        remaining = int((user.locked_until - datetime.now(timezone.utc)).total_seconds() / 60) + 1
+        raise HTTPException(
+            status_code=423,
+            detail=f"Account locked. Try again in {remaining} minute(s)."
+        )
+
     # Verify password
     if not verify_password(credentials.password, user.password_hash):
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+        if user.failed_login_attempts >= 5:
+            user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -217,13 +262,19 @@ async def login(request: Request, credentials: UserLogin, db: Session = Depends(
             detail="User account is inactive"
         )
 
-    # Update last login
-    user.last_login = datetime.utcnow()
+    # Successful login — reset lockout counters
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_login = datetime.now(timezone.utc)
     db.commit()
 
-    # Create access token
+    # Create access token with token version
     access_token = create_access_token(
-        data={"sub": user.email, "user_id": str(user.id)}
+        data={
+            "sub": user.email,
+            "user_id": str(user.id),
+            "token_version": user.token_version or 0,
+        }
     )
 
     # Convert user to response format
@@ -236,41 +287,34 @@ async def login(request: Request, credentials: UserLogin, db: Session = Depends(
     )
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+@router.post(
+    "/logout",
+    operation_id="logout_user",
+    summary="Invalidate current JWT token",
+    response_description="Confirmation that the token has been revoked.",
+    responses={
+        200: {
+            "description": "Logged out successfully.",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Logged out successfully"}
+                }
+            },
+        },
+    },
+)
+async def logout(token: str = Depends(oauth2_scheme)):
     """
-    Get current authenticated user from JWT token
+    Invalidate the current JWT token.
 
-    Args:
-        token: JWT access token from Authorization header
-        db: Database session
-
-    Returns:
-        Current authenticated user
-
-    Raises:
-        HTTPException: If token is invalid or user not found
+    The token is added to an in-memory blacklist and will be rejected on
+    subsequent requests until it naturally expires.
     """
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    # Decode token
     payload = decode_access_token(token)
-    if payload is None:
-        raise credentials_exception
-
-    email: str = payload.get("sub")
-    if email is None:
-        raise credentials_exception
-
-    # Get user from database by email
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
-        raise credentials_exception
-
-    return user
+    if payload and "exp" in payload:
+        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        blacklist_token(token, exp)
+    return {"message": "Logged out successfully"}
 
 
 @router.get(
@@ -293,7 +337,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         },
     },
 )
-async def get_me(current_user: User = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def get_me(request: Request, current_user: User = Depends(get_current_user)):
     """
     Retrieve the full profile of the currently authenticated user.
 
@@ -327,8 +372,10 @@ async def get_me(current_user: User = Depends(get_current_user)):
         },
     },
 )
+@limiter.limit("30/minute")
 async def update_preferences(
-    preferences: dict,
+    request: Request,
+    preferences: UserPreferencesUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -340,21 +387,12 @@ async def update_preferences(
     - `preferred_learning_style` or `learning_style`: One of `visual`, `auditory`,
       `reading`, `kinesthetic`
     - `target_cgpa`: Desired cumulative GPA on the 5.0 scale
-
-    Only recognized fields are persisted; unknown keys are silently ignored.
     """
-    # Map frontend field names to model field names
-    field_mapping = {
-        'preferred_learning_style': 'learning_style',
-        'learning_style': 'learning_style',
-        'target_cgpa': 'target_cgpa'
-    }
-
-    # Update allowed fields
-    for field, value in preferences.items():
-        model_field = field_mapping.get(field)
-        if model_field:
-            setattr(current_user, model_field, value)
+    style = preferences.learning_style or preferences.preferred_learning_style
+    if style is not None:
+        current_user.learning_style = style
+    if preferences.target_cgpa is not None:
+        current_user.target_cgpa = preferences.target_cgpa
 
     db.commit()
     db.refresh(current_user)

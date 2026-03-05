@@ -1,6 +1,8 @@
 """
 CGPA Calculator - Handles all CGPA-related calculations
 """
+import math
+from collections import defaultdict
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from app.models.course import Course, UserCourse, Semester
@@ -21,7 +23,13 @@ class CGPACalculator:
 
         Returns:
             GPA points (0.0-5.0)
+
+        Raises:
+            ValueError: If score is not in [0, 100]
         """
+        score = float(score)
+        if not math.isfinite(score) or score < 0 or score > 100:
+            raise ValueError(f"Score must be between 0 and 100, got {score}")
         return PAUGradingSystem.get_grade_point(score)
 
     @staticmethod
@@ -39,10 +47,15 @@ class CGPACalculator:
         total_quality_points = 0.0
 
         for course in courses:
-            credits = course.get('credits', 0)
-            score = course.get('score', 0)
+            credits = int(course.get('credits', 0))
+            score = float(course.get('score', 0))
 
-            if score > 0:  # Only include courses with scores
+            if credits < 0:
+                credits = 0
+            if not math.isfinite(score) or score < 0 or score > 100:
+                raise ValueError(f"Score must be between 0 and 100, got {score}")
+
+            if score > 0 and credits > 0:  # Only include courses with valid scores and credits
                 grade_point = CGPACalculator.calculate_course_gpa(score)
                 quality_points = grade_point * credits
 
@@ -114,6 +127,8 @@ class CGPACalculator:
         Returns:
             Dict with predicted_cgpa and breakdown
         """
+        current_cgpa = max(min(float(current_cgpa), 5.0), 0.0)
+        current_credits = max(int(current_credits), 0)
         current_quality_points = current_cgpa * current_credits
 
         # Calculate quality points from predicted courses
@@ -121,10 +136,10 @@ class CGPACalculator:
         predicted_quality_points = 0.0
 
         for course in predicted_courses:
-            credits = course.get('credits', 0)
-            predicted_score = course.get('predicted_score', 0)
+            credits = max(int(course.get('credits', 0)), 0)
+            predicted_score = max(min(float(course.get('predicted_score', 0)), 100), 0)
 
-            if predicted_score > 0:
+            if predicted_score > 0 and credits > 0:
                 grade_point = CGPACalculator.calculate_course_gpa(predicted_score)
                 predicted_quality_points += grade_point * credits
                 predicted_credits += credits
@@ -161,6 +176,11 @@ class CGPACalculator:
         Returns:
             Dict with required_gpa and feasibility assessment
         """
+        current_cgpa = max(min(float(current_cgpa), 5.0), 0.0)
+        current_credits = max(int(current_credits), 0)
+        target_cgpa = max(min(float(target_cgpa), 5.0), 0.0)
+        semester_credits = max(int(semester_credits), 0)
+
         current_quality_points = current_cgpa * current_credits
         target_quality_points = target_cgpa * (current_credits + semester_credits)
 
@@ -205,6 +225,17 @@ class CGPACalculator:
         # Get all user's enrolled courses with semester data
         user_courses = db.query(UserCourse).filter(UserCourse.user_id == user_id).all()
 
+        # Batch-fetch ALL tasks for this user's courses (fixes N+1 query)
+        user_course_ids = [uc.id for uc in user_courses]
+        all_tasks = db.query(Task).filter(
+            Task.user_course_id.in_(user_course_ids)
+        ).all() if user_course_ids else []
+
+        # Group tasks by user_course_id
+        tasks_by_course = defaultdict(list)
+        for task in all_tasks:
+            tasks_by_course[task.user_course_id].append(task)
+
         # Group by actual semester (using semester_id FK)
         semesters = {}
         semester_order = {}  # track start_date for sorting
@@ -224,23 +255,29 @@ class CGPACalculator:
                     'courses': []
                 }
 
-            # Get course tasks to calculate current score
-            tasks = db.query(Task).filter(
-                Task.user_course_id == user_course.id,
-                Task.earned_marks.isnot(None)
-            ).all()
+            # Use pre-fetched tasks (scored only for GPA calculation)
+            course_tasks = tasks_by_course.get(user_course.id, [])
+            scored_tasks = [
+                t for t in course_tasks
+                if t.earned_marks is not None and t.weight and (t.max_marks or t.weight)
+            ]
 
-            total_weight = sum(task.weight for task in tasks if task.weight)
-            weighted_score = sum((task.earned_marks or 0) * (task.weight / 100) for task in tasks if task.weight)
+            total_weight = sum(float(t.weight) for t in scored_tasks)
+            weighted_score = sum(
+                (float(t.earned_marks if t.earned_marks is not None else 0) / float(t.max_marks if t.max_marks else t.weight))
+                * float(t.weight)
+                for t in scored_tasks
+            )
 
-            current_score = weighted_score if total_weight > 0 else 0
+            current_score = (weighted_score / total_weight) * 100 if total_weight > 0 else 0
 
+            credits = user_course.course.credits if user_course.course else 0
             semesters[semester_key]['courses'].append({
                 'id': str(user_course.id),
                 'code': user_course.course.code if user_course.course else 'Unknown',
                 'name': user_course.course.title if user_course.course else 'Unknown Course',
-                'credits': user_course.course.credits if user_course.course else 0,
-                'score': current_score,
+                'credits': max(credits, 0),
+                'score': max(min(current_score, 100), 0),
                 'grade': PAUGradingSystem.get_letter_grade(current_score) if current_score > 0 else 'N/A',
                 'grade_point': CGPACalculator.calculate_course_gpa(current_score)
             })
@@ -256,20 +293,31 @@ class CGPACalculator:
         semester_list = [semesters[k] for k in sorted_keys]
         cumulative_data = CGPACalculator.calculate_cumulative_gpa(semester_list)
 
-        # Get predicted courses (courses with incomplete tasks)
+        # Get predicted courses using pre-fetched tasks (no extra queries)
         predicted_courses = []
         for user_course in user_courses:
-            tasks = db.query(Task).filter(Task.user_course_id == user_course.id).all()
-            completed_weight = sum(task.weight for task in tasks if task.earned_marks is not None and task.weight)
+            course_tasks = tasks_by_course.get(user_course.id, [])
+            completed_weight = sum(
+                float(t.weight) for t in course_tasks
+                if t.earned_marks is not None and t.weight
+            )
 
             if completed_weight < 100:  # Course not fully graded
-                # Use current average for prediction
-                scored_tasks = [task for task in tasks if task.earned_marks is not None]
-                avg_score = sum(task.earned_marks for task in scored_tasks) / len(scored_tasks) if scored_tasks else 75.0
+                scored = [
+                    t for t in course_tasks
+                    if t.earned_marks is not None and (t.max_marks or t.weight)
+                ]
+                avg_score = (
+                    sum(
+                        float(t.earned_marks) / float(t.max_marks or t.weight or 1) * 100
+                        for t in scored
+                    ) / len(scored)
+                    if scored else 75.0
+                )
 
                 predicted_courses.append({
                     'credits': user_course.course.credits if user_course.course else 0,
-                    'predicted_score': avg_score
+                    'predicted_score': max(min(avg_score, 100), 0)
                 })
 
         # Calculate predictions
@@ -280,17 +328,34 @@ class CGPACalculator:
         )
 
         # Calculate target requirements using user's target CGPA
-        # Estimate current semester credits
+        # Only count credits from active semester or unassigned courses
+        active_semester = db.query(Semester).filter(
+            Semester.user_id == user_id,
+            Semester.is_active == True
+        ).first()
+
         current_semester_credits = sum(
             user_course.course.credits if user_course.course else 0
             for user_course in user_courses
+            if (active_semester and user_course.semester_id == active_semester.id)
+            or user_course.semester_id is None
         )
+
+        # If no active semester credits, use historical average instead of magic number
+        if current_semester_credits == 0 and semester_list:
+            sem_credit_totals = []
+            for sem in semester_list:
+                sem_credits = sum(c.get('credits', 0) for c in sem.get('courses', []))
+                if sem_credits > 0:
+                    sem_credit_totals.append(sem_credits)
+            if sem_credit_totals:
+                current_semester_credits = round(sum(sem_credit_totals) / len(sem_credit_totals))
 
         target_gpa_data = CGPACalculator.calculate_target_semester_gpa(
             current_cgpa=cumulative_data['cgpa'],
             current_credits=cumulative_data['total_credits'],
             target_cgpa=user_target_cgpa,
-            semester_credits=current_semester_credits if current_semester_credits > 0 else 18  # Default 18 credits
+            semester_credits=current_semester_credits if current_semester_credits > 0 else 18
         )
 
         return {

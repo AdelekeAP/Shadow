@@ -21,7 +21,8 @@ export default function CGPADashboard() {
       setCgpaData(dashRes.data.data)
       setAnalytics(anaRes.data.analytics)
       setError(null)
-    } catch {
+    } catch (e) {
+      console.error('CGPA dashboard error:', e)
       setError('Failed to load CGPA data')
     } finally { setLoading(false) }
   }
@@ -35,7 +36,7 @@ export default function CGPADashboard() {
   const classify = (gpa) => {
     if (gpa >= 4.50) return { label: 'First Class',         cls: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200/60' }
     if (gpa >= 3.50) return { label: 'Second Class Upper',  cls: 'text-blue-600',    bg: 'bg-blue-50 border-blue-200/60' }
-    if (gpa >= 2.50) return { label: 'Second Class Lower',  cls: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200/60' }
+    if (gpa >= 2.40) return { label: 'Second Class Lower',  cls: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200/60' }
     if (gpa >= 1.50) return { label: 'Third Class',         cls: 'text-orange-600',  bg: 'bg-orange-50 border-orange-200/60' }
     return                   { label: 'Pass',                cls: 'text-red-600',     bg: 'bg-red-50 border-red-200/60' }
   }

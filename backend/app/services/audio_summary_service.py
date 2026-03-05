@@ -29,17 +29,9 @@ class AudioSummaryService:
     """Generates audio summaries for study plan activities."""
 
     def __init__(self):
-        self.openai_client = None
+        from app.services.openai_client import get_openai_client
+        self.openai_client = get_openai_client()
         self.elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
-
-        # Initialize OpenAI for script generation
-        try:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if api_key:
-                from openai import OpenAI
-                self.openai_client = OpenAI(api_key=api_key)
-        except Exception as e:
-            logger.warning(f"OpenAI init failed for audio scripts: {e}")
 
         if self.elevenlabs_api_key:
             logger.info("ElevenLabs TTS initialized for audio summaries")

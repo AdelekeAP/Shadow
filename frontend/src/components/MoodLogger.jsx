@@ -69,7 +69,8 @@ export default function MoodLogger({ onMoodLogged, onClose }) {
           setTimeout(() => { onMoodLogged?.(r.data.mood_log); close() }, 2200)
         }
       }
-    } catch {
+    } catch (e) {
+      console.error('Mood log error:', e)
       setFeedback({ error: true })
       setTimeout(() => setFeedback(null), 3000)
     } finally {

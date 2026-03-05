@@ -12,6 +12,17 @@ import logging
 # Load environment variables
 load_dotenv()
 
+# Initialize Sentry for error tracking (only if DSN is configured)
+_sentry_dsn = os.getenv("SENTRY_DSN")
+if _sentry_dsn:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        traces_sample_rate=0.1,
+        environment=os.getenv("ENVIRONMENT", "development"),
+        send_default_pii=False,
+    )
+
 # Configure structured JSON logging
 from app.logging_config import setup_logging
 setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -155,7 +166,15 @@ Tokens are returned upon successful registration or login.
 
 ### Rate Limiting
 
-Authentication endpoints are rate-limited to **5 requests per minute** per client IP to prevent abuse.
+| Endpoint Group | Limit | Window |
+|----------------|-------|--------|
+| Authentication (`/auth/login`, `/auth/register`) | 5 requests | per minute |
+| Mood logging (`/mood/log-mood`) | 10 requests | per minute |
+| Library voting (`/library/.../vote`) | 30 requests | per minute |
+| SmartStudy chat (`/smartstudy/chat`) | 20 requests | per minute |
+| All other endpoints | 60 requests | per minute |
+
+Rate limits are enforced per client IP address. Exceeding the limit returns `HTTP 429 Too Many Requests`.
 """,
     version="2.0.0",
     docs_url="/api/docs",
@@ -173,29 +192,38 @@ Authentication endpoints are rate-limited to **5 requests per minute** per clien
     lifespan=lifespan
 )
 
-# Configure CORS - Allow frontend to make requests
-origins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:3002",
-    "http://localhost:3003",
-    "http://localhost:3004",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    "http://127.0.0.1:3002",
-    "http://127.0.0.1:3003",
-    "http://127.0.0.1:3004",
-]
+# Configure CORS - Environment-based origin restrictions
+if os.getenv("ENVIRONMENT") == "production":
+    origins = [
+        os.getenv("PRODUCTION_FRONTEND_URL", "https://shadow.pau.edu.ng"),
+    ]
+else:
+    origins = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://localhost:3004",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:3002",
+        "http://127.0.0.1:3003",
+        "http://127.0.0.1:3004",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
     max_age=3600
 )
+
+# Security headers middleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Request logging middleware
 from app.middleware.logging_middleware import RequestLoggingMiddleware
@@ -247,6 +275,66 @@ async def health_check():
     return {
         "status": "healthy",
         "environment": os.getenv("ENVIRONMENT", "production")
+    }
+
+
+@app.get(
+    "/health/detailed",
+    summary="Detailed Health Check",
+    tags=["Health"],
+    response_description="Returns health status of all service dependencies.",
+)
+async def detailed_health_check():
+    """
+    Detailed health check that verifies connectivity to all external
+    dependencies: PostgreSQL, Redis, and ClamAV.
+
+    Returns per-service status so operations teams can identify degraded states.
+    """
+    checks = {}
+
+    # Database check
+    try:
+        from sqlalchemy import text
+        from app.database import SessionLocal
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+        checks["database"] = {"status": "healthy"}
+    except Exception as e:
+        checks["database"] = {"status": "unhealthy", "error": str(type(e).__name__)}
+
+    # Redis check
+    try:
+        from app.services.cache_service import _get_redis
+        r = _get_redis()
+        if r is not None:
+            r.ping()
+            checks["redis"] = {"status": "healthy"}
+        else:
+            checks["redis"] = {"status": "unavailable", "note": "Caching disabled"}
+    except Exception as e:
+        checks["redis"] = {"status": "unhealthy", "error": str(type(e).__name__)}
+
+    # ClamAV check
+    try:
+        from app.services.virus_scan_service import get_scanner_status
+        scanner = get_scanner_status()
+        if scanner["available"]:
+            checks["clamav"] = {"status": "healthy", "version": scanner["version"]}
+        else:
+            checks["clamav"] = {"status": "unavailable", "note": "Files quarantined as pending"}
+    except Exception as e:
+        checks["clamav"] = {"status": "unhealthy", "error": str(type(e).__name__)}
+
+    overall = "healthy" if all(
+        c.get("status") == "healthy" for c in checks.values()
+    ) else "degraded"
+
+    return {
+        "status": overall,
+        "environment": os.getenv("ENVIRONMENT", "production"),
+        "services": checks
     }
 
 

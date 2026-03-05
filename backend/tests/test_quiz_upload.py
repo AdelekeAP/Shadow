@@ -705,8 +705,8 @@ class TestStudyWeakTopicsUnit:
 class TestStudyWeakTopicsIntegration:
     """End-to-end tests for study-weak-topics via TestClient."""
 
-    @patch("app.services.quiz_generator.client")
-    def test_study_weak_topics_success_e2e(self, mock_openai_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_study_weak_topics_success_e2e(self, mock_call, quiz_client, quiz_auth_headers):
         """Full flow: create quiz -> submit with some wrong answers -> study weak topics."""
         # Step 1: Create a quiz
         quiz_data = {
@@ -744,7 +744,7 @@ class TestStudyWeakTopicsIntegration:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_openai_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         create_resp = quiz_client.post(
             "/api/v1/smartstudy/quizzes",
@@ -803,8 +803,8 @@ class TestStudyWeakTopicsIntegration:
         assert response.status_code == 404
         assert "Quiz not found" in response.json()["detail"]
 
-    @patch("app.services.quiz_generator.client")
-    def test_study_weak_topics_no_attempts_e2e(self, mock_openai_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_study_weak_topics_no_attempts_e2e(self, mock_call, quiz_client, quiz_auth_headers):
         """study-weak-topics on a quiz with 0 attempts should return 400."""
         # Create a quiz but do NOT submit any answers
         quiz_data = {
@@ -820,7 +820,7 @@ class TestStudyWeakTopicsIntegration:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_openai_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         create_resp = quiz_client.post(
             "/api/v1/smartstudy/quizzes",
@@ -838,8 +838,8 @@ class TestStudyWeakTopicsIntegration:
         assert response.status_code == 400
         assert "Take the quiz first" in response.json()["detail"]
 
-    @patch("app.services.quiz_generator.client")
-    def test_study_weak_topics_no_weak_topics_e2e(self, mock_openai_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_study_weak_topics_no_weak_topics_e2e(self, mock_call, quiz_client, quiz_auth_headers):
         """study-weak-topics after a perfect score should return 400 'no weak topics'."""
         # Create a quiz with only MCQ questions
         quiz_data = {
@@ -863,7 +863,7 @@ class TestStudyWeakTopicsIntegration:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_openai_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         create_resp = quiz_client.post(
             "/api/v1/smartstudy/quizzes",
@@ -910,8 +910,9 @@ class TestUploadValidationUnit:
         mock_user = MagicMock()
         mock_user.id = uuid.uuid4()
 
-        mock_file = MagicMock(spec=["filename", "read"])
+        mock_file = MagicMock(spec=["filename", "read", "size"])
         mock_file.filename = "lecture.pdf"
+        mock_file.size = len(VALID_PDF_BYTES)
         mock_file.read = AsyncMock(return_value=VALID_PDF_BYTES)
 
         mock_db = MagicMock()
@@ -983,8 +984,9 @@ class TestUploadValidationUnit:
         mock_user = MagicMock()
         mock_user.id = uuid.uuid4()
 
-        mock_file = MagicMock(spec=["filename", "read"])
+        mock_file = MagicMock(spec=["filename", "read", "size"])
         mock_file.filename = "algorithms.pdf"
+        mock_file.size = len(VALID_PDF_BYTES)
         mock_file.read = AsyncMock(return_value=VALID_PDF_BYTES)
 
         mock_db = MagicMock()
@@ -1021,8 +1023,9 @@ class TestUploadValidationUnit:
         mock_user = MagicMock()
         mock_user.id = uuid.uuid4()
 
-        mock_file = MagicMock(spec=["filename", "read"])
+        mock_file = MagicMock(spec=["filename", "read", "size"])
         mock_file.filename = "unknown.pdf"
+        mock_file.size = len(VALID_PDF_BYTES)
         mock_file.read = AsyncMock(return_value=VALID_PDF_BYTES)
 
         mock_db = MagicMock()

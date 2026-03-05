@@ -2,7 +2,7 @@
 Course Routes - Course Management and Enrollment
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Header
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 from uuid import UUID
 
@@ -17,6 +17,8 @@ from app.schemas.course import (
     UserCourseResponse
 )
 from app.utils.auth import get_current_user
+from app.utils.pau_grading import PAUGradingSystem
+from app.services.cache_service import cache_delete_pattern
 
 router = APIRouter()
 
@@ -202,19 +204,8 @@ async def enroll_in_course(
             detail="Course not found"
         )
 
-    # Check if already enrolled
-    existing_enrollment = db.query(UserCourse).filter(
-        UserCourse.user_id == current_user.id,
-        UserCourse.course_id == course_uuid
-    ).first()
-
-    if existing_enrollment:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Already enrolled in this course"
-        )
-
-    # Resolve semester: explicit > active > none
+    # Check if already enrolled in same semester (allows retakes in different semesters)
+    # Resolve semester first so we can check against it
     semester_id = None
     if enrollment_data.semester_id:
         semester_id = UUID(enrollment_data.semester_id)
@@ -226,7 +217,22 @@ async def enroll_in_course(
         if active_sem:
             semester_id = active_sem.id
 
-    # Create enrollment
+    dup_query = db.query(UserCourse).filter(
+        UserCourse.user_id == current_user.id,
+        UserCourse.course_id == course_uuid,
+    )
+    if semester_id is None:
+        dup_query = dup_query.filter(UserCourse.semester_id.is_(None))
+    else:
+        dup_query = dup_query.filter(UserCourse.semester_id == semester_id)
+
+    if dup_query.first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Already enrolled in this course for this semester"
+        )
+
+    # Create enrollment (semester_id already resolved above)
     new_enrollment = UserCourse(
         user_id=current_user.id,
         course_id=course_uuid,
@@ -266,10 +272,22 @@ async def get_my_courses(
     Returns:
         List of user's enrolled courses with details
     """
-    # Query user courses
-    query = db.query(UserCourse).filter(UserCourse.user_id == current_user.id)
+    # Query user courses with eager-loaded relationships to avoid N+1
+    query = db.query(UserCourse).options(
+        joinedload(UserCourse.course),
+        joinedload(UserCourse.semester)
+    ).filter(UserCourse.user_id == current_user.id)
 
-    # TODO: Filter by active semester if active_only is True
+    # Filter by active semester if requested
+    if active_only:
+        active_sem = db.query(Semester).filter(
+            Semester.user_id == current_user.id,
+            Semester.is_active == True
+        ).first()
+        if active_sem:
+            query = query.filter(
+                (UserCourse.semester_id == active_sem.id) | (UserCourse.semester_id.is_(None))
+            )
 
     enrollments = query.all()
     return [UserCourseResponse(**enrollment.to_dict()) for enrollment in enrollments]
@@ -374,10 +392,30 @@ async def update_user_course(
     if update_data.exam_score is not None:
         enrollment.exam_score = update_data.exam_score
 
-    # TODO: Recalculate predicted scores and grades
+    # Recalculate scores and grades from component scores
+    ca = float(enrollment.ca_score) if enrollment.ca_score is not None else 0.0
+    participation = float(enrollment.participation_score) if enrollment.participation_score is not None else 0.0
+
+    if enrollment.exam_score is not None:
+        total = ca + participation + float(enrollment.exam_score)
+        enrollment.current_score = min(total, 100)
+        enrollment.current_grade_point = PAUGradingSystem.get_grade_point(enrollment.current_score)
+        enrollment.letter_grade = PAUGradingSystem.get_letter_grade(enrollment.current_score)
+        enrollment.predicted_score = enrollment.current_score
+        enrollment.predicted_grade_point = enrollment.current_grade_point
+        enrollment.predicted_letter_grade = enrollment.letter_grade
+    elif enrollment.predicted_exam_score is not None:
+        predicted_total = ca + participation + float(enrollment.predicted_exam_score)
+        enrollment.predicted_score = min(predicted_total, 100)
+        enrollment.predicted_grade_point = PAUGradingSystem.get_grade_point(enrollment.predicted_score)
+        enrollment.predicted_letter_grade = PAUGradingSystem.get_letter_grade(enrollment.predicted_score)
 
     db.commit()
     db.refresh(enrollment)
+
+    # Invalidate CGPA caches when scores change
+    if any(v is not None for v in [update_data.ca_score, update_data.participation_score, update_data.exam_score]):
+        cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     return UserCourseResponse(**enrollment.to_dict())
 
@@ -425,5 +463,7 @@ async def unenroll_from_course(
 
     db.delete(enrollment)
     db.commit()
+
+    cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     return None

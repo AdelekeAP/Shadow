@@ -119,18 +119,37 @@ function DashboardPage() {
   const [showCourseMenu, setShowCourseMenu] = useState(null)
   const [showCommandPalette, setShowCommandPalette] = useState(false)
 
+  const [loadError, setLoadError] = useState(null)
+
   useEffect(() => {
     if (!isAuthenticated()) { navigate('/login'); return }
     setUser(getCurrentUser())
-    loadEnrolledCourses()
-    loadTasks()
-    loadTaskStats()
+    loadAll()
   }, [navigate])
 
+  const loadAll = async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      // Parallel API calls — 3 requests at once instead of sequential
+      const [courses, taskList, stats] = await Promise.all([
+        getEnrolledCourses().catch(() => []),
+        getTasks().catch(() => []),
+        getTaskStats().catch(() => null),
+      ])
+      setEnrolledCourses(courses)
+      setTasks(taskList)
+      setTaskStats(stats)
+    } catch (e) {
+      console.error('Dashboard load error:', e)
+      setLoadError('Failed to load dashboard data. Please refresh.')
+    } finally {
+      setLoading(false)
+    }
+  }
   const loadEnrolledCourses = async () => {
-    try { setLoading(true); setEnrolledCourses(await getEnrolledCourses()) }
+    try { setEnrolledCourses(await getEnrolledCourses()) }
     catch (e) { console.error('Error loading courses:', e) }
-    finally { setLoading(false) }
   }
   const loadTasks = async () => {
     try { setTasks(await getTasks()) } catch (e) { console.error(e) }
@@ -155,9 +174,9 @@ function DashboardPage() {
     catch (e) { console.error(e); throw e }
   }
 
-  const totalCredits = enrolledCourses.reduce((s, e) => s + e.course.credits, 0)
+  const totalCredits = enrolledCourses.reduce((s, e) => s + (Number(e.course?.credits) || 0), 0)
   const averageCA = enrolledCourses.length > 0
-    ? enrolledCourses.reduce((s, e) => s + e.ca_score, 0) / enrolledCourses.length : 0
+    ? enrolledCourses.reduce((s, e) => s + (Number(e.ca_score) || 0), 0) / enrolledCourses.length : 0
 
   /* ─── Quick-action commands ─── */
   const commands = [
@@ -265,7 +284,7 @@ function DashboardPage() {
             </button>
 
             {/* Mobile burger */}
-            <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden p-1.5 rounded-lg hover:bg-surface-100">
+            <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle navigation menu" aria-expanded={menuOpen} className="md:hidden p-1.5 rounded-lg hover:bg-surface-100">
               <svg className="w-5 h-5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 {menuOpen
                   ? <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -324,6 +343,16 @@ function DashboardPage() {
 
       {/* ══════════ MAIN ══════════ */}
       <main className="mx-auto max-w-[1360px] px-5 py-6">
+
+        {/* Error banner */}
+        {loadError && (
+          <div className="mb-4 p-4 rounded-xl border border-red-200 bg-red-50 flex items-center justify-between">
+            <p className="text-[13px] text-red-700 font-medium">{loadError}</p>
+            <button onClick={loadAll} className="text-[12px] font-semibold text-red-600 hover:text-red-800 px-3 py-1 rounded-lg hover:bg-red-100 transition-colors">
+              Retry
+            </button>
+          </div>
+        )}
 
         {/* SmartStudy AI Trigger Banner */}
         <SmartStudyTriggerBanner onOpenSmartStudy={() => setShowSmartStudy(true)} />

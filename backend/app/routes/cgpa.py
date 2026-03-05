@@ -2,7 +2,9 @@
 CGPA Routes - API endpoints for CGPA calculations and analytics
 """
 import logging
+import re
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import Dict, List
 from app.database import get_db
@@ -11,6 +13,8 @@ from app.utils.cgpa_calculator import CGPACalculator
 from app.models.user import User
 from app.models.course import Course, UserCourse, Semester
 from app.models.task import Task
+from app.services.cache_service import cache_get, cache_set, cache_delete_pattern
+from app.services.cgpa_export_service import generate_csv, generate_pdf
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -49,14 +53,21 @@ def get_cgpa_dashboard(
         - Target analysis
     """
     try:
+        cache_key = f"cgpa:dashboard:{current_user.id}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
-        return {
+        result = {
             "success": True,
             "data": cgpa_data
         }
+        cache_set(cache_key, result, ttl=300)
+        return result
     except Exception as e:
         logger.error("CGPA Dashboard Error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error calculating CGPA: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to calculate CGPA dashboard")
 
 
 @router.get(
@@ -75,15 +86,23 @@ def get_current_cgpa(
         Current CGPA and total credits
     """
     try:
+        cache_key = f"cgpa:current:{current_user.id}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
-        return {
+        result = {
             "success": True,
             "cgpa": cgpa_data['current']['cgpa'],
             "total_credits": cgpa_data['current']['total_credits'],
             "total_courses": cgpa_data['total_courses']
         }
+        cache_set(cache_key, result, ttl=300)
+        return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calculating CGPA: {str(e)}")
+        logger.error("Current CGPA Error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to calculate current CGPA")
 
 
 @router.get(
@@ -140,17 +159,32 @@ def get_semester_gpa(
                 detail=f"No courses found for {semester} {year}"
             )
 
+        # Batch-fetch all tasks for these courses (avoids N+1)
+        uc_ids = [uc.id for uc in user_courses]
+        all_tasks = db.query(Task).filter(
+            Task.user_course_id.in_(uc_ids),
+            Task.earned_marks.isnot(None)
+        ).all() if uc_ids else []
+
+        from collections import defaultdict
+        tasks_by_uc = defaultdict(list)
+        for t in all_tasks:
+            tasks_by_uc[t.user_course_id].append(t)
+
         # Calculate semester GPA
         course_data = []
         for uc in user_courses:
-            tasks = db.query(Task).filter(
-                Task.user_course_id == uc.id,
-                Task.earned_marks.isnot(None)
-            ).all()
+            uc_tasks = tasks_by_uc.get(uc.id, [])
 
-            total_weight = sum(task.weight for task in tasks if task.weight)
-            weighted_score = sum((task.earned_marks or 0) * (task.weight / 100) for task in tasks if task.weight)
-            current_score = weighted_score if total_weight > 0 else 0
+            # Only include tasks with valid weight and max_marks
+            valid_tasks = [t for t in uc_tasks if t.weight and (t.max_marks or t.weight)]
+            total_weight = sum(float(task.weight) for task in valid_tasks)
+            weighted_score = sum(
+                (float(task.earned_marks if task.earned_marks is not None else 0) / float(task.max_marks if task.max_marks else task.weight))
+                * float(task.weight)
+                for task in valid_tasks
+            )
+            current_score = (weighted_score / total_weight) * 100 if total_weight > 0 else 0
 
             course_data.append({
                 'credits': uc.course.credits if uc.course else 0,
@@ -169,10 +203,12 @@ def get_semester_gpa(
             "courses": course_data
         }
 
-    except HTTPException:
+    except HTTPException as he:
+        logger.warning("Semester GPA request rejected: %s %s", he.status_code, he.detail)
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calculating semester GPA: {str(e)}")
+        logger.error("Semester GPA Error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to calculate semester GPA")
 
 
 @router.post(
@@ -213,7 +249,8 @@ def calculate_target_requirements(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calculating target: {str(e)}")
+        logger.error("Target CGPA Error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to calculate target requirements")
 
 
 @router.post(
@@ -252,7 +289,8 @@ def predict_final_cgpa(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error predicting CGPA: {str(e)}")
+        logger.error("Predict CGPA Error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to predict CGPA")
 
 
 @router.get(
@@ -271,16 +309,24 @@ def get_semester_breakdown(
         List of all semesters with GPA and courses
     """
     try:
+        cache_key = f"cgpa:breakdown:{current_user.id}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
 
-        return {
+        result = {
             "success": True,
             "semesters": cgpa_data['semesters'],
             "cumulative_cgpa": cgpa_data['current']['cgpa']
         }
+        cache_set(cache_key, result, ttl=300)
+        return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting breakdown: {str(e)}")
+        logger.error("Semester Breakdown Error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get semester breakdown")
 
 
 @router.get(
@@ -302,6 +348,11 @@ def get_cgpa_analytics(
         - Improvement suggestions
     """
     try:
+        cache_key = f"cgpa:analytics:{current_user.id}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
         semesters = cgpa_data['semesters']
 
@@ -345,7 +396,7 @@ def get_cgpa_analytics(
                 grade = PAUGradingSystem.get_letter_grade(course['score'])
                 grade_distribution[grade] = grade_distribution.get(grade, 0) + 1
 
-        return {
+        result = {
             "success": True,
             "analytics": {
                 "best_semester_gpa": round(best_gpa, 2),
@@ -358,6 +409,67 @@ def get_cgpa_analytics(
                 "semester_names": semester_names
             }
         }
+        cache_set(cache_key, result, ttl=300)
+        return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calculating analytics: {str(e)}")
+        logger.error("CGPA Analytics Error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to calculate analytics")
+
+
+@router.get(
+    "/export/csv",
+    operation_id="export_cgpa_csv",
+    summary="Export CGPA data as CSV",
+)
+def export_cgpa_csv(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export CGPA data as a downloadable CSV file"""
+    try:
+        cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
+        csv_bytes = generate_csv(cgpa_data)
+
+        # Sanitize filename to prevent injection attacks
+        safe_name = re.sub(r'[^\w\s-]', '', current_user.full_name or 'student')
+        safe_name = safe_name.replace(' ', '_')[:50]
+        filename = f"shadow-cgpa-{safe_name}.csv"
+
+        return Response(
+            content=csv_bytes,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        logger.error("CSV export error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to export CSV")
+
+
+@router.get(
+    "/export/pdf",
+    operation_id="export_cgpa_pdf",
+    summary="Export CGPA data as PDF",
+)
+def export_cgpa_pdf(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export CGPA data as a downloadable PDF transcript"""
+    try:
+        cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
+        pdf_bytes = generate_pdf(cgpa_data, current_user.full_name or 'Student')
+
+        # Sanitize filename to prevent injection attacks
+        safe_name = re.sub(r'[^\w\s-]', '', current_user.full_name or 'student')
+        safe_name = safe_name.replace(' ', '_')[:50]
+        filename = f"shadow-cgpa-{safe_name}.pdf"
+
+        return Response(
+            content=bytes(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        logger.error("PDF export error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to export PDF")

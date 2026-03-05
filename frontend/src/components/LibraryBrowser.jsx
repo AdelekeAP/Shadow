@@ -1,47 +1,120 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { browseLibrary, voteOnDocument, downloadLibraryDocument, getLibraryStats, getMyCourses } from '../services/api'
 import DocumentViewer from './DocumentViewer'
 
+const PAGE_SIZE = 20
+
 export default function LibraryBrowser() {
   const [documents, setDocuments] = useState([])
+  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
   const [courses, setCourses] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState(null)
+
+  // Filters
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selCourse, setSelCourse] = useState('')
   const [selWeek, setSelWeek] = useState('')
+  const [selFileType, setSelFileType] = useState('')
+  const [sortBy, setSortBy] = useState('helpful')
   const [showFilters, setShowFilters] = useState(false)
+
+  // UI state
   const [votingId, setVotingId] = useState(null)
   const [downloadingId, setDownloadingId] = useState(null)
   const [viewingDoc, setViewingDoc] = useState(null)
   const [toast, setToast] = useState(null)
 
+  const debounceRef = useRef(null)
+
+  // Debounce search input (400ms delay)
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(search)
+    }, 400)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [search])
+
+  // Initial data load
   useEffect(() => { loadData() }, [])
-  useEffect(() => { applyFilters() }, [search, selCourse, selWeek])
+
+  // Re-fetch when any filter/sort changes (uses debounced search)
+  useEffect(() => { applyFilters() }, [debouncedSearch, selCourse, selWeek, selFileType, sortBy])
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000) }
 
   const loadData = async () => {
     try {
       setLoading(true)
-      const [docs, st, cr] = await Promise.all([browseLibrary(), getLibraryStats(), getMyCourses(true)])
-      setDocuments(docs); setStats(st); setCourses(cr); setError(null)
-    } catch { setError('Failed to load library.') }
-    finally { setLoading(false) }
+      const [browseResult, st, cr] = await Promise.all([
+        browseLibrary({ limit: PAGE_SIZE, sortBy }),
+        getLibraryStats(),
+        getMyCourses(true)
+      ])
+      const docs = Array.isArray(browseResult) ? browseResult : (browseResult.documents || [])
+      const tot = browseResult.total ?? docs.length
+      const more = browseResult.has_more ?? false
+      setDocuments(docs)
+      setTotal(tot)
+      setHasMore(more)
+      setStats(st)
+      // getMyCourses returns enrolled course objects like { course: { id, code, title }, ... }
+      setCourses(cr)
+      setError(null)
+    } catch {
+      setError('Failed to load library.')
+    } finally {
+      setLoading(false)
+    }
   }
+
+  const buildFilterParams = useCallback((offset = 0) => ({
+    search: debouncedSearch || undefined,
+    courseId: selCourse || undefined,
+    weekNumber: selWeek ? parseInt(selWeek) : undefined,
+    fileType: selFileType || undefined,
+    sortBy: sortBy || 'helpful',
+    limit: PAGE_SIZE,
+    offset,
+  }), [debouncedSearch, selCourse, selWeek, selFileType, sortBy])
 
   const applyFilters = async () => {
     try {
       setLoading(true)
-      const docs = await browseLibrary({
-        search: search || undefined,
-        courseId: selCourse || undefined,
-        weekNumber: selWeek ? parseInt(selWeek) : undefined,
-      })
-      setDocuments(docs); setError(null)
-    } catch { setError('Failed to filter.') }
-    finally { setLoading(false) }
+      const browseResult = await browseLibrary(buildFilterParams(0))
+      const docs = Array.isArray(browseResult) ? browseResult : (browseResult.documents || [])
+      const tot = browseResult.total ?? docs.length
+      const more = browseResult.has_more ?? false
+      setDocuments(docs)
+      setTotal(tot)
+      setHasMore(more)
+      setError(null)
+    } catch {
+      setError('Failed to filter.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return
+    try {
+      setLoadingMore(true)
+      const browseResult = await browseLibrary(buildFilterParams(documents.length))
+      const moreDocs = Array.isArray(browseResult) ? browseResult : (browseResult.documents || [])
+      const more = browseResult.has_more ?? false
+      setDocuments(prev => [...prev, ...moreDocs])
+      setHasMore(more)
+    } catch {
+      showToast('Failed to load more documents')
+    } finally {
+      setLoadingMore(false)
+    }
   }
 
   const handleVote = async (id, val) => {
@@ -68,8 +141,9 @@ export default function LibraryBrowser() {
     finally { setDownloadingId(null) }
   }
 
-  const clearFilters = () => { setSearch(''); setSelCourse(''); setSelWeek('') }
-  const hasFilters = search || selCourse || selWeek
+  const clearFilters = () => { setSearch(''); setDebouncedSearch(''); setSelCourse(''); setSelWeek(''); setSelFileType(''); setSortBy('helpful') }
+  const hasFilters = search || selCourse || selWeek || selFileType || sortBy !== 'helpful'
+  const activeFilterCount = [selCourse, selWeek, selFileType, sortBy !== 'helpful' ? sortBy : ''].filter(Boolean).length
 
   const fmtSize = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`
 
@@ -79,7 +153,32 @@ export default function LibraryBrowser() {
     return 'bg-surface-100 text-surface-400 border-surface-200/60'
   }
 
-  /* ── Loading skeleton ── */
+  // Extract course info from enrolled course objects (handles both flat and nested shapes)
+  const getCourseInfo = (c) => {
+    const id = c.course?.id || c.id
+    const code = c.course?.code || c.code
+    const title = c.course?.title || c.title
+    return { id, code, title }
+  }
+
+  const sortOptions = [
+    { value: 'helpful', label: 'Most Helpful' },
+    { value: 'newest', label: 'Newest First' },
+    { value: 'oldest', label: 'Oldest First' },
+    { value: 'name', label: 'Name (A-Z)' },
+    { value: 'size_desc', label: 'Size (Largest)' },
+    { value: 'size_asc', label: 'Size (Smallest)' },
+  ]
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return ''
+    try {
+      const d = new Date(dateStr)
+      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    } catch { return '' }
+  }
+
+  /* -- Loading skeleton -- */
   if (loading && !documents.length) return (
     <div className="space-y-4">
       {/* Stats skeleton */}
@@ -90,6 +189,10 @@ export default function LibraryBrowser() {
             <div className="h-6 w-10 bg-surface-100/60 rounded" />
           </div>
         ))}
+      </div>
+      {/* Search bar skeleton */}
+      <div className="rounded-xl border border-surface-200/60 bg-white p-3 animate-pulse">
+        <div className="h-8 bg-surface-100 rounded-xl" />
       </div>
       {/* Card skeletons */}
       {[1, 2, 3].map(i => (
@@ -108,28 +211,29 @@ export default function LibraryBrowser() {
   return (
     <div className="space-y-5">
 
-      {/* ── Stats strip ── */}
+      {/* -- Stats strip -- */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: 'Documents', value: stats.total_documents, icon: DocIcon },
             { label: 'Contributors', value: stats.total_contributors, icon: UsersIcon },
             { label: 'Downloads', value: stats.total_downloads || 0, icon: DownloadIcon },
-            { label: 'Courses', value: stats.courses_covered || courses.length, icon: BookIcon },
+            { label: 'Courses', value: stats.courses_covered || stats.popular_courses?.length || courses.length, icon: BookIcon },
           ].map(s => (
             <div key={s.label} className="rounded-xl border border-surface-200/60 bg-white p-4">
               <div className="flex items-center gap-1.5 mb-1.5">
                 <s.icon className="w-3.5 h-3.5 text-surface-300" />
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-surface-400">{s.label}</span>
               </div>
-              <p className="font-display text-[22px] font-bold text-navy-900 leading-none">{s.value ?? '—'}</p>
+              <p className="font-display text-[22px] font-bold text-navy-900 leading-none">{s.value ?? 0}</p>
             </div>
           ))}
         </div>
       )}
 
-      {/* ── Search + Filters ── */}
+      {/* -- Search + Sort + Filters -- */}
       <div className="rounded-xl border border-surface-200/60 bg-white">
+        {/* Row 1: Search, Sort, Filter toggle */}
         <div className="flex items-center gap-3 p-3">
           {/* Search */}
           <div className="relative flex-1">
@@ -140,15 +244,42 @@ export default function LibraryBrowser() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search topics or files..."
-              className="w-full bg-surface-50 border border-surface-200/80 rounded-xl pl-9 pr-3 py-2 text-[12px] text-navy-900 placeholder:text-surface-300 focus:border-navy-300 focus:ring-2 focus:ring-navy-100 focus:bg-white transition-all outline-none"
+              placeholder="Search topics, files, or content..."
+              className="w-full bg-surface-50 border border-surface-200/80 rounded-xl pl-9 pr-8 py-2 text-[12px] text-navy-900 placeholder:text-surface-300 focus:border-navy-300 focus:ring-2 focus:ring-navy-100 focus:bg-white transition-all outline-none"
             />
+            {search && (
+              <button
+                onClick={() => { setSearch(''); setDebouncedSearch('') }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-surface-300 hover:text-surface-500 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
+
+          {/* Sort dropdown */}
+          <div className="relative">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="appearance-none bg-surface-50 border border-surface-200/80 rounded-xl pl-3 pr-7 py-2 text-[12px] font-semibold text-navy-700 focus:border-navy-300 focus:ring-2 focus:ring-navy-100 outline-none transition-all cursor-pointer"
+            >
+              {sortOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <svg className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-surface-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5 7.5 3m0 0L12 7.5M7.5 3v13.5m13.5-4.5L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
+            </svg>
+          </div>
+
           {/* Filter toggle */}
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold transition-all border ${
-              showFilters || hasFilters
+              showFilters || activeFilterCount > 0
                 ? 'bg-navy-800/[0.06] text-navy-800 border-navy-200/40'
                 : 'bg-surface-50 text-surface-400 border-surface-200/80 hover:text-navy-700'
             }`}
@@ -156,25 +287,45 @@ export default function LibraryBrowser() {
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
             </svg>
-            Filters
-            {hasFilters && <span className="w-1.5 h-1.5 rounded-full bg-navy-600" />}
+            <span className="hidden sm:inline">Filters</span>
+            {activeFilterCount > 0 && (
+              <span className="min-w-[16px] h-4 flex items-center justify-center rounded-full bg-navy-700 text-white text-[9px] font-bold px-1">{activeFilterCount}</span>
+            )}
           </button>
         </div>
 
-        {/* Filter panel */}
+        {/* Row 2: Filter panel (expandable) */}
         {showFilters && (
           <div className="border-t border-surface-100 px-3 py-3 flex flex-wrap items-end gap-3">
-            <div className="flex-1 min-w-[140px]">
+            {/* Course filter */}
+            <div className="flex-1 min-w-[160px]">
               <label className="text-[10px] font-semibold uppercase tracking-wider text-surface-400 mb-1 block">Course</label>
               <select value={selCourse} onChange={(e) => setSelCourse(e.target.value)}
                 className="w-full bg-surface-50 border border-surface-200/80 rounded-xl px-3 py-2 text-[12px] text-navy-900 focus:border-navy-300 focus:ring-2 focus:ring-navy-100 outline-none transition-all"
               >
                 <option value="">All Courses</option>
-                {courses.map(c => (
-                  <option key={c.id} value={c.id}>{c.code || c.course?.code} — {c.title || c.course?.title}</option>
-                ))}
+                {courses.map(c => {
+                  const info = getCourseInfo(c)
+                  return (
+                    <option key={info.id} value={info.id}>{info.code}{info.title ? ` \u2014 ${info.title}` : ''}</option>
+                  )
+                })}
               </select>
             </div>
+
+            {/* File type filter */}
+            <div className="w-32">
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-surface-400 mb-1 block">Type</label>
+              <select value={selFileType} onChange={(e) => setSelFileType(e.target.value)}
+                className="w-full bg-surface-50 border border-surface-200/80 rounded-xl px-3 py-2 text-[12px] text-navy-900 focus:border-navy-300 focus:ring-2 focus:ring-navy-100 outline-none transition-all"
+              >
+                <option value="">All Types</option>
+                <option value="pdf">PDF</option>
+                <option value="pptx">PowerPoint</option>
+              </select>
+            </div>
+
+            {/* Week filter */}
             <div className="w-28">
               <label className="text-[10px] font-semibold uppercase tracking-wider text-surface-400 mb-1 block">Week</label>
               <select value={selWeek} onChange={(e) => setSelWeek(e.target.value)}
@@ -186,16 +337,60 @@ export default function LibraryBrowser() {
                 ))}
               </select>
             </div>
+
+            {/* Clear all filters */}
             {hasFilters && (
-              <button onClick={clearFilters} className="text-[11px] font-semibold text-red-600 hover:text-red-700 transition-colors pb-2">
-                Clear
+              <button onClick={clearFilters} className="flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:text-red-700 transition-colors pb-2">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                Clear all
               </button>
+            )}
+          </div>
+        )}
+
+        {/* Row 3: Result count + active filter pills */}
+        {(total > 0 || hasFilters) && (
+          <div className="border-t border-surface-100/60 px-3 py-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-surface-400">
+                {loading ? 'Searching...' : `${total} document${total !== 1 ? 's' : ''} found`}
+              </span>
+              {/* Active filter pills (shown even when filter panel is collapsed) */}
+              {!showFilters && selCourse && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-navy-800/[0.06] text-[10px] font-semibold text-navy-700">
+                  {getCourseInfo(courses.find(c => getCourseInfo(c).id === selCourse) || {})?.code || 'Course'}
+                  <button onClick={() => setSelCourse('')} className="hover:text-navy-900">
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </span>
+              )}
+              {!showFilters && selFileType && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-navy-800/[0.06] text-[10px] font-semibold text-navy-700">
+                  {selFileType.toUpperCase()}
+                  <button onClick={() => setSelFileType('')} className="hover:text-navy-900">
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </span>
+              )}
+              {!showFilters && selWeek && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-navy-800/[0.06] text-[10px] font-semibold text-navy-700">
+                  Week {selWeek}
+                  <button onClick={() => setSelWeek('')} className="hover:text-navy-900">
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </span>
+              )}
+            </div>
+            {loading && documents.length > 0 && (
+              <div className="w-4 h-4 border-2 border-navy-200 border-t-navy-600 rounded-full animate-spin flex-shrink-0" />
             )}
           </div>
         )}
       </div>
 
-      {/* ── Error ── */}
+      {/* -- Error -- */}
       {error && (
         <div className="rounded-xl border border-red-200/60 bg-red-50 p-4 flex items-center gap-2.5">
           <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -206,7 +401,7 @@ export default function LibraryBrowser() {
         </div>
       )}
 
-      {/* ── Empty state ── */}
+      {/* -- Empty state -- */}
       {!loading && documents.length === 0 && (
         <div className="flex flex-col items-center py-16">
           <div className="w-14 h-14 rounded-2xl bg-surface-100 flex items-center justify-center mb-4">
@@ -216,15 +411,15 @@ export default function LibraryBrowser() {
           </div>
           <p className="text-[14px] font-semibold text-navy-900 mb-1">No documents found</p>
           <p className="text-[12px] text-surface-400">
-            {hasFilters ? 'Try adjusting your filters' : 'Be the first to contribute!'}
+            {hasFilters ? 'Try adjusting your search or filters' : 'Be the first to contribute!'}
           </p>
           {hasFilters && (
-            <button onClick={clearFilters} className="mt-3 text-[12px] font-semibold text-navy-700 hover:text-navy-900 transition-colors">Clear filters</button>
+            <button onClick={clearFilters} className="mt-3 px-4 py-1.5 rounded-lg text-[12px] font-semibold text-navy-700 hover:text-navy-900 bg-surface-100 hover:bg-surface-200 transition-all">Clear all filters</button>
           )}
         </div>
       )}
 
-      {/* ── Document cards ── */}
+      {/* -- Document cards -- */}
       {documents.length > 0 && (
         <div className="space-y-3">
           {documents.map(doc => (
@@ -252,6 +447,9 @@ export default function LibraryBrowser() {
                       <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-surface-100 text-surface-400">Week {doc.week_number}</span>
                     )}
                     <span className="px-2 py-0.5 text-[10px] rounded-md bg-surface-100/60 text-surface-300">{fmtSize(doc.file_size)}</span>
+                    {doc.uploaded_at && (
+                      <span className="px-2 py-0.5 text-[10px] rounded-md bg-surface-100/60 text-surface-300">{formatDate(doc.uploaded_at)}</span>
+                    )}
                   </div>
 
                   {/* Meta */}
@@ -316,10 +514,42 @@ export default function LibraryBrowser() {
               </div>
             </div>
           ))}
+
+          {/* Load More / Pagination */}
+          {hasMore && (
+            <div className="flex justify-center pt-2 pb-1">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-xl border border-surface-200/80 bg-white hover:bg-surface-50 hover:border-surface-300 text-[12px] font-semibold text-navy-700 transition-all disabled:opacity-40"
+              >
+                {loadingMore ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-navy-200 border-t-navy-600 rounded-full animate-spin" />
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
+                    </svg>
+                    Load more ({documents.length} of {total})
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* End of results indicator */}
+          {!hasMore && documents.length > 0 && total > PAGE_SIZE && (
+            <p className="text-center text-[11px] text-surface-300 pt-1 pb-2">
+              Showing all {total} documents
+            </p>
+          )}
         </div>
       )}
 
-      {/* ── Toast ── */}
+      {/* -- Toast -- */}
       {toast && (
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-xl shadow-lg border animate-fade-in ${
           toast.type === 'error' ? 'bg-red-50 border-red-200/60 text-red-700' : 'bg-emerald-50 border-emerald-200/60 text-emerald-700'
@@ -331,14 +561,14 @@ export default function LibraryBrowser() {
         </div>
       )}
 
-      {/* ── Document Viewer ── */}
+      {/* -- Document Viewer -- */}
       {viewingDoc && <DocumentViewer document={viewingDoc} onClose={() => setViewingDoc(null)} />}
     </div>
   )
 }
 
 
-/* ─── Mini icon components ─── */
+/* --- Mini icon components --- */
 function DocIcon({ className }) {
   return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
 }

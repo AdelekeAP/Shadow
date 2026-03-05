@@ -41,7 +41,8 @@ export default function NotificationPreferences({ onClose }) {
     try {
       const data = await getNotificationPreferences()
       setPreferences(data)
-    } catch {
+    } catch (e) {
+      console.error('Load preferences error:', e)
       setError('Failed to load notification preferences')
     } finally { setLoading(false) }
   }
@@ -82,7 +83,8 @@ export default function NotificationPreferences({ onClose }) {
         weekly_digest: preferences.weekly_digest
       })
       setSuccessMessage('Preferences saved successfully!')
-    } catch {
+    } catch (e) {
+      console.error('Save preferences error:', e)
       setError('Failed to save preferences')
     } finally { setSaving(false) }
   }

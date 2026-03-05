@@ -226,6 +226,9 @@ async def vote_on_library_document(
                 detail="Document not found"
             )
 
+        # Access check: can't vote on private/unscanned docs you don't own
+        _check_document_access(document, current_user)
+
         # Can't vote on own documents
         if str(document.uploaded_by) == str(current_user.id):
             raise HTTPException(
@@ -427,6 +430,8 @@ async def download_library_document(
     summary="Get current user's library contributions and stats",
 )
 async def get_my_contributions(
+    limit: int = Query(50, ge=1, le=100, description="Max results per page"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -438,16 +443,16 @@ async def get_my_contributions(
     - Total views across all documents
     - Total downloads across all documents
     - Total helpful votes received
-    - List of uploaded documents with stats
+    - Paginated list of uploaded documents with stats
     """
     try:
         # Check cache first
-        cache_key = f"library:contributions:{current_user.id}"
+        cache_key = f"library:contributions:{current_user.id}:{limit}:{offset}"
         cached = cache_get(cache_key)
         if cached is not None:
             return cached
 
-        stats = get_user_contributions(db, str(current_user.id))
+        stats = get_user_contributions(db, str(current_user.id), limit=limit, offset=offset)
 
         cache_set(cache_key, stats, ttl=300)
         return stats

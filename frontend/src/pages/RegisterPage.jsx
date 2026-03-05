@@ -19,6 +19,9 @@ function RegisterPage() {
     setError('')
     if (form.password !== form.confirmPassword) { setError('Passwords do not match'); return }
     if (form.password.length < 8) { setError('Password must be at least 8 characters'); return }
+    if (!/[A-Z]/.test(form.password)) { setError('Password must contain an uppercase letter'); return }
+    if (!/[a-z]/.test(form.password)) { setError('Password must contain a lowercase letter'); return }
+    if (!/[0-9]/.test(form.password)) { setError('Password must contain a number'); return }
 
     setLoading(true)
     try {
@@ -92,11 +95,11 @@ function RegisterPage() {
 
           <form onSubmit={handleSubmit} className="space-y-3.5">
             <Field label="Full name">
-              <input type="text" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} required className={inputCls} placeholder="Paul Adeleke" />
+              <input type="text" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} required autoComplete="name" className={inputCls} placeholder="Paul Adeleke" />
             </Field>
 
             <Field label="Email">
-              <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} required className={inputCls} placeholder="your.email@pau.edu.ng" />
+              <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} required autoComplete="email" className={inputCls} placeholder="your.email@pau.edu.ng" />
             </Field>
 
             <div className="grid grid-cols-2 gap-3">
@@ -124,11 +127,11 @@ function RegisterPage() {
             </div>
 
             <Field label="Password">
-              <input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} required className={inputCls} placeholder="Min 8 characters" />
+              <input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} required autoComplete="new-password" className={inputCls} placeholder="Min 8 characters" />
             </Field>
 
             <Field label="Confirm password">
-              <input type="password" value={form.confirmPassword} onChange={(e) => set('confirmPassword', e.target.value)} required className={inputCls} placeholder="Re-enter password" />
+              <input type="password" value={form.confirmPassword} onChange={(e) => set('confirmPassword', e.target.value)} required autoComplete="new-password" className={inputCls} placeholder="Re-enter password" />
             </Field>
 
             <button

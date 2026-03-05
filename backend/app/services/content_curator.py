@@ -5,7 +5,7 @@ Adapts recommendations based on learning styles
 """
 import logging
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.services.youtube_service import get_youtube_service
 from app.services.reddit_service import get_reddit_service
@@ -47,7 +47,7 @@ class ContentCurator:
         results = {
             'topic': topic,
             'learning_style': learning_style,
-            'curated_at': datetime.utcnow().isoformat(),
+            'curated_at': datetime.now(timezone.utc).isoformat(),
             'videos': [],
             'reddit_resources': [],
             'combined_recommendations': []

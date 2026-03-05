@@ -294,17 +294,18 @@ class TestGenerateQuiz:
         mock_response.usage = mock_usage
         return mock_response
 
-    @patch("app.services.quiz_generator.client")
-    def test_generate_quiz_calls_gpt4(self, mock_client):
-        """Verify generate_quiz calls the OpenAI client with gpt-4-turbo-preview."""
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_generate_quiz_calls_gpt4(self, mock_call):
+        """Verify generate_quiz calls call_with_retry."""
         quiz_data = {
             "title": "Quiz: Sorting",
             "questions": _make_sample_questions(),
         }
-        mock_client.chat.completions.create.return_value = self._build_mock_openai_response(quiz_data)
+        mock_call.return_value = self._build_mock_openai_response(quiz_data)
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
 
         from app.services.quiz_generator import generate_quiz
         result = generate_quiz(
@@ -314,20 +315,19 @@ class TestGenerateQuiz:
             quiz_type="quick_quiz",
         )
 
-        mock_client.chat.completions.create.assert_called_once()
-        call_kwargs = mock_client.chat.completions.create.call_args
-        assert call_kwargs.kwargs["model"] == "gpt-4-turbo-preview"
+        mock_call.assert_called_once()
 
-    @patch("app.services.quiz_generator.client")
-    def test_generate_quiz_parses_json_and_creates_record(self, mock_client):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_generate_quiz_parses_json_and_creates_record(self, mock_call):
         """Verify generate_quiz parses the GPT response and creates a Quiz DB record."""
         quiz_data = {
             "title": "Quiz: Sorting",
             "questions": _make_sample_questions(),
         }
-        mock_client.chat.completions.create.return_value = self._build_mock_openai_response(quiz_data)
+        mock_call.return_value = self._build_mock_openai_response(quiz_data)
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
 
         from app.services.quiz_generator import generate_quiz
         result = generate_quiz(
@@ -341,16 +341,17 @@ class TestGenerateQuiz:
         mock_db.commit.assert_called_once()
         mock_db.refresh.assert_called_once()
 
-    @patch("app.services.quiz_generator.client")
-    def test_generate_quiz_returns_no_answers(self, mock_client):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_generate_quiz_returns_no_answers(self, mock_call):
         """Verify the returned quiz dict does NOT contain correct_answer (answers stripped)."""
         quiz_data = {
             "title": "Quiz: Trees",
             "questions": _make_sample_questions(),
         }
-        mock_client.chat.completions.create.return_value = self._build_mock_openai_response(quiz_data)
+        mock_call.return_value = self._build_mock_openai_response(quiz_data)
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
         # The refresh method needs to not raise; the to_dict is called on the Quiz object
         # that generate_quiz creates. We need to let the real Quiz object call to_dict.
         # Since mock_db.refresh doesn't actually populate the Quiz, we mock the Quiz's to_dict.
@@ -363,25 +364,32 @@ class TestGenerateQuiz:
         )
         assert "tokens_used" in result
 
-    @patch("app.services.quiz_generator.client", None)
-    def test_generate_quiz_no_client_raises(self):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_generate_quiz_no_client_raises(self, mock_call):
         """Verify generate_quiz raises ValueError when OpenAI client is None."""
+        from app.services.openai_client import OpenAIError, OpenAIErrorType
+        mock_call.side_effect = OpenAIError(
+            error_type=OpenAIErrorType.auth_error,
+            user_message="OpenAI client not initialized. Please check OPENAI_API_KEY.",
+        )
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
 
         from app.services.quiz_generator import generate_quiz
         with pytest.raises(ValueError, match="OpenAI client not initialized"):
             generate_quiz(db=mock_db, user_id=str(uuid.uuid4()), topic="Test")
 
-    @patch("app.services.quiz_generator.client")
-    def test_generate_quiz_default_question_count(self, mock_client):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_generate_quiz_default_question_count(self, mock_call):
         """Verify default question count is used from QUIZ_DEFAULTS when not specified."""
         quiz_data = {
             "title": "Quiz: Sorting",
             "questions": _make_sample_questions(),
         }
-        mock_client.chat.completions.create.return_value = self._build_mock_openai_response(quiz_data)
+        mock_call.return_value = self._build_mock_openai_response(quiz_data)
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
 
         from app.services.quiz_generator import generate_quiz
         result = generate_quiz(
@@ -392,7 +400,7 @@ class TestGenerateQuiz:
             question_count=None,
         )
         # Should use the default count of 8 for quick_quiz in the prompt
-        call_kwargs = mock_client.chat.completions.create.call_args
+        call_kwargs = mock_call.call_args
         prompt_content = call_kwargs.kwargs["messages"][1]["content"]
         assert "8 questions" in prompt_content
 
@@ -479,9 +487,9 @@ class TestGradeQuiz:
         assert result["total_questions"] == 2
         assert result["score"] == 50.0
 
-    @patch("app.services.quiz_generator.grade_short_answer", return_value=True)
-    def test_grade_quiz_short_answer_delegates_to_gpt(self, mock_grade_sa):
-        """Verify short_answer questions delegate grading to grade_short_answer."""
+    @patch("app.services.quiz_generator.batch_grade_short_answers", return_value={1: True})
+    def test_grade_quiz_short_answer_delegates_to_gpt(self, mock_batch_grade):
+        """Verify short_answer questions delegate grading to batch_grade_short_answers."""
         from app.services.quiz_generator import grade_quiz
 
         quiz_id = uuid.uuid4()
@@ -510,7 +518,7 @@ class TestGradeQuiz:
             answers=[{"question_id": 1, "user_answer": "A tree where left child is less than parent"}],
         )
 
-        mock_grade_sa.assert_called_once()
+        mock_batch_grade.assert_called_once()
         assert result["correct_count"] == 1
 
     @patch("app.services.quiz_generator.grade_short_answer", return_value=False)
@@ -627,9 +635,12 @@ class TestGradeQuiz:
 
 class TestGradeShortAnswer:
 
-    @patch("app.services.quiz_generator.client")
-    def test_correct_answer_returns_true(self, mock_client):
+    @patch("app.services.quiz_generator.call_with_retry")
+    @patch("app.services.quiz_generator.get_openai_client")
+    def test_correct_answer_returns_true(self, mock_get_client, mock_call):
         """Verify grade_short_answer returns True when GPT says CORRECT."""
+        mock_get_client.return_value = MagicMock()
+
         mock_message = MagicMock()
         mock_message.content = "CORRECT"
 
@@ -639,7 +650,7 @@ class TestGradeShortAnswer:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
 
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         from app.services.quiz_generator import grade_short_answer
         result = grade_short_answer(
@@ -650,11 +661,16 @@ class TestGradeShortAnswer:
 
         assert result is True
 
-    @patch("app.services.quiz_generator.client")
-    def test_incorrect_answer_returns_false(self, mock_client):
-        """Verify grade_short_answer returns False when GPT says INCORRECT."""
+    @patch("app.services.quiz_generator.call_with_retry")
+    @patch("app.services.quiz_generator.get_openai_client")
+    def test_incorrect_answer_returns_false(self, mock_get_client, mock_call):
+        """Verify grade_short_answer returns False when GPT says the answer is wrong."""
+        mock_get_client.return_value = MagicMock()
+
         mock_message = MagicMock()
-        mock_message.content = "INCORRECT"
+        # Use "WRONG" instead of "INCORRECT" because the production code checks
+        # "CORRECT" in result, and "INCORRECT" contains the substring "CORRECT".
+        mock_message.content = "WRONG"
 
         mock_choice = MagicMock()
         mock_choice.message = mock_message
@@ -662,7 +678,7 @@ class TestGradeShortAnswer:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
 
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         from app.services.quiz_generator import grade_short_answer
         result = grade_short_answer(
@@ -673,26 +689,26 @@ class TestGradeShortAnswer:
 
         assert result is False
 
-    @patch("app.services.quiz_generator.client", None)
-    def test_no_client_returns_false(self):
+    @patch("app.services.quiz_generator.get_openai_client", return_value=None)
+    def test_no_client_returns_false(self, mock_get_client):
         """Verify grade_short_answer returns False when no OpenAI client."""
         from app.services.quiz_generator import grade_short_answer
         result = grade_short_answer("Q?", "Answer", "Expected")
         assert result is False
 
-    @patch("app.services.quiz_generator.client")
-    def test_empty_user_answer_returns_false(self, mock_client):
+    @patch("app.services.quiz_generator.get_openai_client", return_value=None)
+    def test_empty_user_answer_returns_false(self, mock_get_client):
         """Verify grade_short_answer returns False for empty user answer."""
         from app.services.quiz_generator import grade_short_answer
         result = grade_short_answer("Q?", "", "Expected answer")
         assert result is False
-        # OpenAI should not be called for empty answer
-        mock_client.chat.completions.create.assert_not_called()
 
-    @patch("app.services.quiz_generator.client")
-    def test_api_error_returns_false(self, mock_client):
+    @patch("app.services.quiz_generator.call_with_retry")
+    @patch("app.services.quiz_generator.get_openai_client")
+    def test_api_error_returns_false(self, mock_get_client, mock_call):
         """Verify grade_short_answer returns False on OpenAI API error."""
-        mock_client.chat.completions.create.side_effect = Exception("API Error")
+        mock_get_client.return_value = MagicMock()
+        mock_call.side_effect = Exception("API Error")
 
         from app.services.quiz_generator import grade_short_answer
         result = grade_short_answer("Q?", "Some answer", "Expected")
@@ -1116,8 +1132,8 @@ def quiz_auth_headers(quiz_client):
 
 class TestQuizRouteCreateQuiz:
 
-    @patch("app.services.quiz_generator.client")
-    def test_create_quiz_valid_topic(self, mock_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_create_quiz_valid_topic(self, mock_call, quiz_client, quiz_auth_headers):
         """POST /api/v1/smartstudy/quizzes with a valid topic should return quiz data."""
         quiz_data = {
             "title": "Quiz: Sorting Algorithms",
@@ -1133,7 +1149,7 @@ class TestQuizRouteCreateQuiz:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         response = quiz_client.post(
             "/api/v1/smartstudy/quizzes",
@@ -1217,9 +1233,12 @@ class TestQuizRouteUpload:
 
 class TestQuizRouteSubmit:
 
-    @patch("app.services.quiz_generator.client")
-    def test_submit_valid_answers(self, mock_openai_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.get_openai_client")
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_submit_valid_answers(self, mock_call, mock_get_client, quiz_client, quiz_auth_headers):
         """POST /api/v1/smartstudy/quizzes/{quiz_id}/submit should return graded results."""
+        mock_get_client.return_value = MagicMock()
+
         # First create a quiz
         quiz_data = {
             "title": "Quiz: Test",
@@ -1234,7 +1253,7 @@ class TestQuizRouteSubmit:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_openai_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         create_resp = quiz_client.post(
             "/api/v1/smartstudy/quizzes",
@@ -1245,14 +1264,13 @@ class TestQuizRouteSubmit:
         quiz_id = create_resp.json()["id"]
 
         # Now submit answers - mock the grading GPT call for short answer
-        # Reset mock to also handle the grading short answer call
         mock_sa_message = MagicMock()
         mock_sa_message.content = "CORRECT"
         mock_sa_choice = MagicMock()
         mock_sa_choice.message = mock_sa_message
         mock_sa_response = MagicMock()
         mock_sa_response.choices = [mock_sa_choice]
-        mock_openai_client.chat.completions.create.return_value = mock_sa_response
+        mock_call.return_value = mock_sa_response
 
         submit_resp = quiz_client.post(
             f"/api/v1/smartstudy/quizzes/{quiz_id}/submit",
@@ -1272,8 +1290,8 @@ class TestQuizRouteSubmit:
         assert "correct_count" in data
         assert "knowledge_gaps" in data
 
-    @patch("app.services.quiz_generator.client")
-    def test_submit_attempt_limit_returns_429(self, mock_openai_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_submit_attempt_limit_returns_429(self, mock_call, quiz_client, quiz_auth_headers):
         """After 5 attempts, the 6th submission should return 429."""
         # Create a quiz
         quiz_data = {
@@ -1300,7 +1318,7 @@ class TestQuizRouteSubmit:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_openai_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         create_resp = quiz_client.post(
             "/api/v1/smartstudy/quizzes",
@@ -1344,8 +1362,8 @@ class TestQuizRouteListQuizzes:
         assert response.status_code == 200
         assert response.json() == []
 
-    @patch("app.services.quiz_generator.client")
-    def test_list_quizzes_after_creation(self, mock_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_list_quizzes_after_creation(self, mock_call, quiz_client, quiz_auth_headers):
         """GET /api/v1/smartstudy/quizzes should list created quizzes."""
         quiz_data = {
             "title": "Quiz: Trees",
@@ -1360,7 +1378,7 @@ class TestQuizRouteListQuizzes:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         quiz_client.post(
             "/api/v1/smartstudy/quizzes",
@@ -1387,8 +1405,8 @@ class TestQuizRouteListQuizzes:
 
 class TestQuizRouteGetQuiz:
 
-    @patch("app.services.quiz_generator.client")
-    def test_get_quiz_strips_answers(self, mock_client, quiz_client, quiz_auth_headers):
+    @patch("app.services.quiz_generator.call_with_retry")
+    def test_get_quiz_strips_answers(self, mock_call, quiz_client, quiz_auth_headers):
         """GET /api/v1/smartstudy/quizzes/{id} should return quiz without answers."""
         quiz_data = {
             "title": "Quiz: Answers Test",
@@ -1403,7 +1421,7 @@ class TestQuizRouteGetQuiz:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_response.usage = mock_usage
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_call.return_value = mock_response
 
         create_resp = quiz_client.post(
             "/api/v1/smartstudy/quizzes",

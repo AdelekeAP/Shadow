@@ -7,7 +7,7 @@ Tests the full request/response cycle through FastAPI with a real
 """
 import pytest
 import uuid as _uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from app.models.smartstudy import (
@@ -71,7 +71,7 @@ def study_plans_in_db(db_session, user_id):
             resource_url=f"https://example.com/resource{j}",
             resource_title=f"Resource {j}",
             clicked=clicked,
-            clicked_at=datetime.utcnow() if clicked else None,
+            clicked_at=datetime.now(timezone.utc) if clicked else None,
             completed=completed,
             helpful_rating=rating,
             day_number=1,
@@ -680,7 +680,7 @@ class TestUsageSummary:
         from app.models.usage_log import UsageLog
 
         user_id = _uuid.UUID(registered_user["user"]["id"])
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         logs = [
             UsageLog(
@@ -734,7 +734,7 @@ class TestUsageSummary:
         from app.models.usage_log import UsageLog
 
         user_id = _uuid.UUID(registered_user["user"]["id"])
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Recent log (within 7 days)
         recent = UsageLog(
