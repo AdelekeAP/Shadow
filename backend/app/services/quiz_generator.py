@@ -4,30 +4,23 @@ Generates quizzes from topics or document content using GPT-4
 """
 import json
 import logging
-import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
+from uuid import UUID
 
-from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.models.quiz import Quiz, QuizAttempt
 from app.models.smartstudy import StudyPlan, UploadedDocument
+from app.services.openai_client import (
+    get_openai_client,
+    call_with_retry,
+    OpenAIError,
+    PLAN_MODELS,
+)
 
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-client = None
-try:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        client = OpenAI(api_key=api_key)
-        logger.info("OpenAI client initialized for quiz generation")
-    else:
-        logger.warning("OPENAI_API_KEY not set - quiz generation disabled")
-except Exception as e:
-    logger.error(f"Failed to initialize OpenAI client: {e}")
 
 
 # Default question counts by quiz type
@@ -152,12 +145,26 @@ def generate_quiz(
     study_plan_id: Optional[str] = None,
     slide_content: Optional[str] = None,
 ) -> dict:
-    if not client:
-        raise ValueError("OpenAI client not initialized. Set OPENAI_API_KEY.")
-
     # Determine question count
     if question_count is None:
         question_count = QUIZ_DEFAULTS.get(quiz_type, {}).get("count", 10)
+
+    # Duplicate prevention: reuse quiz with same user+topic+source_type created within 24h
+    source_type_check = "document" if slide_content else ("study_plan" if study_plan_id else "topic")
+    cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+    existing_quiz = db.query(Quiz).filter(
+        Quiz.user_id == (UUID(user_id) if isinstance(user_id, str) else user_id),
+        Quiz.topic == topic,
+        Quiz.source_type == source_type_check,
+        Quiz.created_at >= cutoff_24h,
+    ).order_by(Quiz.created_at.desc()).first()
+
+    if existing_quiz:
+        logger.info(f"Returning existing quiz {existing_quiz.id} (duplicate within 24h)")
+        result = existing_quiz.to_dict(include_answers=False)
+        result["tokens_used"] = 0
+        result["reused"] = True
+        return result
 
     # Determine source type
     source_type = "topic"
@@ -183,15 +190,16 @@ def generate_quiz(
     logger.info(f"Generating {quiz_type} quiz: {question_count} questions on '{topic}'")
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+        response = call_with_retry(
             messages=[
                 {"role": "system", "content": "You are an expert academic quiz generator. Return ONLY valid JSON."},
                 {"role": "user", "content": prompt}
             ],
+            models=PLAN_MODELS,
             temperature=0.7,
             max_tokens=4000,
             timeout=60.0,
+            stream=False,
         )
 
         gpt_response = response.choices[0].message.content
@@ -199,12 +207,14 @@ def generate_quiz(
 
         # Parse response
         quiz_data = parse_quiz_json(gpt_response)
+    except OpenAIError as e:
+        logger.error(f"Quiz generation failed: {e.error_type.value}")
+        raise ValueError(e.user_message)
     except Exception as e:
         logger.error(f"Quiz generation failed: {type(e).__name__}: {str(e)}")
         raise ValueError(f"Failed to generate quiz: {str(e)}")
 
     # Create Quiz record
-    from uuid import UUID
     quiz = Quiz(
         user_id=UUID(user_id) if isinstance(user_id, str) else user_id,
         study_plan_id=UUID(study_plan_id) if study_plan_id else None,
@@ -239,8 +249,6 @@ def grade_quiz(
     time_taken_seconds: Optional[int] = None,
     timed_out: bool = False,
 ) -> dict:
-    from uuid import UUID
-
     quiz = db.query(Quiz).filter(
         Quiz.id == UUID(quiz_id),
         Quiz.user_id == UUID(user_id),
@@ -256,6 +264,23 @@ def grade_quiz(
     correct_count = 0
     topic_results = {}  # topic_tag -> {correct: int, total: int}
 
+    # Collect short-answer items for batch grading
+    short_answer_items = []
+    for answer in answers:
+        q_id = answer.get("question_id")
+        user_answer = answer.get("user_answer", "").strip()
+        question = question_map.get(q_id)
+        if question and question["type"] == "short_answer" and user_answer:
+            short_answer_items.append({
+                "id": q_id,
+                "question": question["question"],
+                "user_answer": user_answer,
+                "correct_answer": question["correct_answer"],
+            })
+
+    # Batch grade all short answers in one GPT call
+    sa_verdicts = batch_grade_short_answers(short_answer_items) if short_answer_items else {}
+
     for answer in answers:
         q_id = answer.get("question_id")
         user_answer = answer.get("user_answer", "").strip()
@@ -270,8 +295,7 @@ def grade_quiz(
         if question["type"] in ("multiple_choice", "true_false"):
             is_correct = user_answer.upper().strip() == correct_answer.upper().strip()
         elif question["type"] == "short_answer":
-            # For short answer, use GPT-4 to grade
-            is_correct = grade_short_answer(question["question"], user_answer, correct_answer)
+            is_correct = sa_verdicts.get(q_id, False)
 
         if is_correct:
             correct_count += 1
@@ -323,20 +347,85 @@ def grade_quiz(
     return attempt.to_dict()
 
 
+def batch_grade_short_answers(items: List[Dict[str, str]]) -> Dict[int, bool]:
+    """
+    Grade multiple short-answer questions in a single GPT call.
+
+    Args:
+        items: List of dicts with keys: id, question, user_answer, correct_answer
+
+    Returns:
+        Dict mapping question id -> is_correct (bool)
+    """
+    if not items:
+        return {}
+
+    client = get_openai_client()
+    if not client:
+        return {item["id"]: False for item in items}
+
+    # Build batch prompt
+    lines = []
+    for item in items:
+        lines.append(
+            f'{item["id"]}. Question: {item["question"]}\n'
+            f'   Expected: {item["correct_answer"]}\n'
+            f'   Student: {item["user_answer"]}'
+        )
+    batch_prompt = (
+        "Grade each student answer as CORRECT or INCORRECT. "
+        "Return ONLY valid JSON mapping question number to verdict, e.g.: "
+        '{"1": "CORRECT", "2": "INCORRECT"}\n\n' + "\n\n".join(lines)
+    )
+
+    try:
+        response = call_with_retry(
+            messages=[
+                {"role": "system", "content": "You are a strict academic grader. Return ONLY valid JSON."},
+                {"role": "user", "content": batch_prompt},
+            ],
+            models=PLAN_MODELS,
+            temperature=0,
+            max_tokens=200,
+            timeout=30.0,
+            stream=False,
+        )
+        raw = response.choices[0].message.content.strip()
+        # Strip markdown fences if present
+        raw = re.sub(r'^```(?:json)?\s*', '', raw)
+        raw = re.sub(r'\s*```$', '', raw)
+        verdicts = json.loads(raw)
+        return {
+            int(k): "CORRECT" in str(v).upper()
+            for k, v in verdicts.items()
+        }
+    except Exception as e:
+        logger.warning(f"Batch grading failed, falling back to individual: {e}")
+        # Fallback to individual grading
+        results = {}
+        for item in items:
+            results[item["id"]] = grade_short_answer(
+                item["question"], item["user_answer"], item["correct_answer"]
+            )
+        return results
+
+
 def grade_short_answer(question: str, user_answer: str, correct_answer: str) -> bool:
+    client = get_openai_client()
     if not client or not user_answer:
         return False
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+        response = call_with_retry(
             messages=[
                 {"role": "system", "content": "You are a strict academic grader. Return ONLY 'CORRECT' or 'INCORRECT'."},
                 {"role": "user", "content": f"Question: {question}\nExpected answer: {correct_answer}\nStudent answer: {user_answer}\n\nIs the student's answer substantially correct? Reply ONLY with CORRECT or INCORRECT."}
             ],
+            models=PLAN_MODELS,
             temperature=0,
             max_tokens=10,
             timeout=30.0,
+            stream=False,
         )
         result = response.choices[0].message.content.strip().upper()
         return "CORRECT" in result

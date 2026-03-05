@@ -94,6 +94,10 @@ async def create_quiz_with_upload(
         if file_ext not in ("pdf", "pptx"):
             raise HTTPException(status_code=400, detail="Only PDF and PPTX files are supported")
 
+        # Pre-validate file size if available (avoids reading entire file into memory)
+        if uploaded_file.size is not None and uploaded_file.size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
         # Read file bytes
         try:
             file_bytes = await uploaded_file.read()

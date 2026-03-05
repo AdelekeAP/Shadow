@@ -90,9 +90,10 @@ export const login = async (credentials) => {
 }
 
 /**
- * Logout user
+ * Logout user - invalidates token on backend then clears local state
  */
-export const logout = () => {
+export const logout = async () => {
+  try { await api.post('/api/v1/auth/logout') } catch { /* best-effort */ }
   localStorage.removeItem('access_token')
   localStorage.removeItem('user')
   window.location.href = '/login'
@@ -388,6 +389,16 @@ export const deleteTask = async (taskId) => {
 export const getCurrentCGPA = async () => {
   const response = await api.get('/api/v1/gpa/current')
   return response.data
+}
+
+export const exportCGPAcsv = async () => {
+  const response = await api.get('/api/v1/cgpa/export/csv', { responseType: 'blob' })
+  return response
+}
+
+export const exportCGPApdf = async () => {
+  const response = await api.get('/api/v1/cgpa/export/pdf', { responseType: 'blob' })
+  return response
 }
 
 // ============================================
@@ -724,17 +735,21 @@ export const generateAudioSummary = async (planId, resourceId) => {
  * @param {Object} filters - Filter parameters
  * @param {string} filters.courseId - Filter by course UUID
  * @param {number} filters.weekNumber - Filter by week (1-15)
+ * @param {string} filters.fileType - Filter by file type (pdf, pptx, ppt)
  * @param {string} filters.search - Search in topic or filename
+ * @param {string} filters.sortBy - Sort order (helpful, newest, oldest, name, size_asc, size_desc)
  * @param {number} filters.limit - Max results (default 50)
  * @param {number} filters.offset - Pagination offset
- * @returns {Promise} List of library documents
+ * @returns {Promise} Paginated library documents with total count
  */
 export const browseLibrary = async (filters = {}) => {
   try {
     const params = new URLSearchParams()
     if (filters.courseId) params.append('course_id', filters.courseId)
     if (filters.weekNumber) params.append('week_number', filters.weekNumber)
+    if (filters.fileType) params.append('file_type', filters.fileType)
     if (filters.search) params.append('search', filters.search)
+    if (filters.sortBy) params.append('sort_by', filters.sortBy)
     if (filters.limit) params.append('limit', filters.limit)
     if (filters.offset) params.append('offset', filters.offset)
 
@@ -842,7 +857,13 @@ export const uploadToLibrary = async (uploadData) => {
     const response = await api.post('/api/v1/smartstudy/library/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
-      }
+      },
+      onUploadProgress: uploadData.onProgress
+        ? (progressEvent) => {
+            const pct = Math.round((progressEvent.loaded * 100) / (progressEvent.total || progressEvent.loaded))
+            uploadData.onProgress(pct)
+          }
+        : undefined
     })
     return response.data
   } catch (error) {

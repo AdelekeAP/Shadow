@@ -2,7 +2,7 @@
 Task Routes - Task Management and Tracking
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Header
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import List, Optional
 from uuid import UUID
@@ -23,6 +23,7 @@ from app.schemas.task import (
 )
 from app.utils.auth import get_current_user
 from app.utils.grading import calculate_predicted_grade
+from app.services.cache_service import cache_delete_pattern
 
 router = APIRouter()
 
@@ -221,6 +222,9 @@ async def create_task(
         # Even for pending tasks, update predictions (accounts for new pending work)
         update_course_grades(user_course, db)
 
+    # Invalidate CGPA cache — task scores affect GPA calculations
+    cache_delete_pattern(f"cgpa:*:{current_user.id}")
+
     return TaskResponse(**new_task.to_dict())
 
 
@@ -236,7 +240,9 @@ async def get_user_tasks(
     course_id: Optional[str] = None,
     is_completed: Optional[bool] = None,
     category: Optional[str] = None,
-    is_urgent: Optional[bool] = None
+    is_urgent: Optional[bool] = None,
+    limit: int = 50,
+    offset: int = 0
 ):
     """
     Get all tasks for the current user with optional filters
@@ -274,17 +280,28 @@ async def get_user_tasks(
     if is_urgent is not None:
         query = query.filter(Task.is_urgent == is_urgent)
 
-    tasks = query.order_by(Task.priority_score.desc(), Task.due_date).all()
+    # Clamp pagination params
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
 
-    # Add course information to each task
+    tasks = query.order_by(Task.priority_score.desc(), Task.due_date).offset(offset).limit(limit).all()
+
+    # Batch-load course info for all tasks in ONE query (fixes N+1)
+    uc_ids = list({t.user_course_id for t in tasks if t.user_course_id})
+    uc_map = {}
+    if uc_ids:
+        user_courses = db.query(UserCourse).options(
+            joinedload(UserCourse.course)
+        ).filter(UserCourse.id.in_(uc_ids)).all()
+        uc_map = {uc.id: uc for uc in user_courses}
+
     tasks_with_course = []
     for task in tasks:
         task_dict = task.to_dict()
-        # Get course info from user_course relationship
-        user_course = db.query(UserCourse).filter(UserCourse.id == task.user_course_id).first()
-        if user_course and user_course.course:
-            task_dict['course_code'] = user_course.course.code
-            task_dict['course_title'] = user_course.course.title
+        uc = uc_map.get(task.user_course_id)
+        if uc and uc.course:
+            task_dict['course_code'] = uc.course.code
+            task_dict['course_title'] = uc.course.title
         tasks_with_course.append(TaskWithCourse(**task_dict))
 
     return tasks_with_course
@@ -310,38 +327,46 @@ async def get_task_statistics(
     Returns:
         Task statistics
     """
-    all_tasks = db.query(Task).filter(Task.user_id == current_user.id).all()
+    user_filter = Task.user_id == current_user.id
+    now = datetime.now(timezone.utc)
 
-    total_tasks = len(all_tasks)
-    completed_tasks = len([t for t in all_tasks if t.is_completed])
+    # Single query for all counts using conditional aggregation
+    total_tasks = db.query(func.count(Task.id)).filter(user_filter).scalar() or 0
+    completed_tasks = db.query(func.count(Task.id)).filter(
+        user_filter, Task.is_completed == True
+    ).scalar() or 0
     pending_tasks = total_tasks - completed_tasks
 
-    # Count overdue tasks (make due_date timezone-aware for comparison)
-    overdue_tasks = 0
-    for t in all_tasks:
-        if not t.is_completed and t.due_date:
-            due_date_aware = t.due_date
-            if due_date_aware.tzinfo is None:
-                due_date_aware = due_date_aware.replace(tzinfo=timezone.utc)
-            if due_date_aware < datetime.now(timezone.utc):
-                overdue_tasks += 1
+    overdue_tasks = db.query(func.count(Task.id)).filter(
+        user_filter,
+        Task.is_completed == False,
+        Task.due_date.isnot(None),
+        Task.due_date < now
+    ).scalar() or 0
 
-    ca_tasks = [t for t in all_tasks if t.category == "CA"]
-    total_ca_available = sum(float(t.weight) for t in ca_tasks)
-    total_ca_earned = sum(
-        float(t.earned_marks) for t in ca_tasks
-        if t.is_completed and t.earned_marks
-    )
+    # CA aggregates via SQL
+    total_ca_available = db.query(func.sum(Task.weight)).filter(
+        user_filter, Task.category == "CA"
+    ).scalar() or 0
+    total_ca_earned = db.query(func.sum(Task.earned_marks)).filter(
+        user_filter, Task.category == "CA",
+        Task.is_completed == True,
+        Task.earned_marks.isnot(None)
+    ).scalar() or 0
 
     completion_rate = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0.0
 
-    completed_with_marks = [t for t in all_tasks if t.is_completed and t.earned_marks and t.max_marks]
-    average_score = None
-    if completed_with_marks:
-        average_score = sum(
-            (float(t.earned_marks) / float(t.max_marks) * 100)
-            for t in completed_with_marks
-        ) / len(completed_with_marks)
+    # Average score for completed tasks with marks
+    avg_result = db.query(
+        func.avg(Task.earned_marks * 100.0 / Task.max_marks)
+    ).filter(
+        user_filter,
+        Task.is_completed == True,
+        Task.earned_marks.isnot(None),
+        Task.max_marks.isnot(None),
+        Task.max_marks > 0
+    ).scalar()
+    average_score = float(avg_result) if avg_result is not None else None
 
     return TaskStats(
         total_tasks=total_tasks,
@@ -545,6 +570,9 @@ async def update_task(
             # Calculate and update predicted grades
             update_course_grades(user_course, db)
 
+    # Invalidate CGPA cache — task changes affect GPA calculations
+    cache_delete_pattern(f"cgpa:*:{current_user.id}")
+
     return TaskResponse(**task.to_dict())
 
 
@@ -618,42 +646,45 @@ async def mark_task_complete(
     db.commit()
     db.refresh(task)
 
-    # Update UserCourse scores
+    # Update UserCourse scores (with row lock to prevent race conditions)
     if task.earned_marks:
         user_course = db.query(UserCourse).filter(
             UserCourse.id == task.user_course_id
-        ).first()
+        ).with_for_update().first()
         if user_course:
             if task.category == "CA":
-                # Update CA score
-                ca_tasks = db.query(Task).filter(
+                # Atomic CA score recalculation
+                ca_total = db.query(func.sum(Task.earned_marks)).filter(
                     Task.user_course_id == user_course.id,
                     Task.category == "CA",
                     Task.is_completed == True,
                     Task.earned_marks.isnot(None)
-                ).all()
-                user_course.ca_score = sum(float(t.earned_marks) for t in ca_tasks)
+                ).scalar() or 0
+                user_course.ca_score = float(ca_total)
 
             elif task.category == "EXAM":
-                # Update EXAM score
-                exam_tasks = db.query(Task).filter(
+                # Atomic EXAM score recalculation
+                exam_total = db.query(func.sum(Task.earned_marks)).filter(
                     Task.user_course_id == user_course.id,
                     Task.category == "EXAM",
                     Task.is_completed == True,
                     Task.earned_marks.isnot(None)
-                ).all()
-                user_course.exam_score = sum(float(t.earned_marks) for t in exam_tasks)
+                ).scalar() or 0
+                user_course.exam_score = float(exam_total)
 
             # Update completion rate
-            all_tasks = db.query(Task).filter(Task.user_course_id == user_course.id).count()
-            completed = db.query(Task).filter(
+            all_count = db.query(func.count(Task.id)).filter(Task.user_course_id == user_course.id).scalar()
+            completed_count = db.query(func.count(Task.id)).filter(
                 Task.user_course_id == user_course.id,
                 Task.is_completed == True
-            ).count()
-            user_course.completion_rate = (completed / all_tasks * 100) if all_tasks > 0 else 0
+            ).scalar()
+            user_course.completion_rate = (completed_count / all_count * 100) if all_count > 0 else 0
 
             # Calculate and update predicted grades
             update_course_grades(user_course, db)
+
+    # Invalidate CGPA cache — completed task with marks affects GPA
+    cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     # Build response
     task_data = task.to_dict()
@@ -726,5 +757,8 @@ async def delete_task(
 
     db.delete(task)
     db.commit()
+
+    # Invalidate CGPA cache — deleted task affects GPA calculations
+    cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     return None

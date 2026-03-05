@@ -13,7 +13,7 @@ const GRADE_SCALE = [
 const CLASSIFICATIONS = [
   { name: 'First Class',         min: 4.50, color: 'bg-emerald-500' },
   { name: 'Second Class Upper',  min: 3.50, color: 'bg-blue-500' },
-  { name: 'Second Class Lower',  min: 2.50, color: 'bg-amber-500' },
+  { name: 'Second Class Lower',  min: 2.40, color: 'bg-amber-500' },
   { name: 'Third Class',         min: 1.50, color: 'bg-orange-500' },
   { name: 'Pass',                min: 1.00, color: 'bg-red-400' },
   { name: 'Fail',                min: 0.00, color: 'bg-red-600' },
@@ -200,7 +200,7 @@ export default function WhatIfCalculator({ onClose }) {
                   )}
                 </div>
                 <p className={`text-[10px] font-semibold mt-1 ${
-                  simCGPA >= 4.5 ? 'text-emerald-600' : simCGPA >= 3.5 ? 'text-blue-600' : simCGPA >= 2.5 ? 'text-amber-600' : 'text-red-600'
+                  simCGPA >= 4.5 ? 'text-emerald-600' : simCGPA >= 3.5 ? 'text-blue-600' : simCGPA >= 2.4 ? 'text-amber-600' : 'text-red-600'
                 }`}>{currentClass.name}</p>
               </div>
               {/* Target */}
@@ -411,7 +411,7 @@ export default function WhatIfCalculator({ onClose }) {
                     <p className="text-[12px] text-surface-400">
                       Simulated CGPA: <span className="font-mono font-bold text-navy-900">{simCGPA.toFixed(2)}</span>
                       {' '}— <span className={`font-semibold ${
-                        simCGPA >= 4.5 ? 'text-emerald-600' : simCGPA >= 3.5 ? 'text-blue-600' : simCGPA >= 2.5 ? 'text-amber-600' : 'text-red-600'
+                        simCGPA >= 4.5 ? 'text-emerald-600' : simCGPA >= 3.5 ? 'text-blue-600' : simCGPA >= 2.4 ? 'text-amber-600' : 'text-red-600'
                       }`}>{currentClass.name}</span>
                     </p>
                     <button

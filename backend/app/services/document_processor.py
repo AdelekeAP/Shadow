@@ -8,12 +8,10 @@ import logging
 from typing import Dict, Any, Optional
 from PyPDF2 import PdfReader
 from pptx import Presentation
-from openai import OpenAI
+
+from app.services.openai_client import call_with_retry, PLAN_MODELS, OpenAIError
 
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 def extract_text_from_pdf(file_path: str) -> str:
@@ -139,23 +137,13 @@ def extract_topics_with_gpt4(slide_text: str, max_length: int = 3000) -> Dict[st
             "difficulty": "intermediate"
         }
     """
-    if not client:
-        logger.warning("⚠️ OpenAI client not initialized, skipping topic extraction")
-        return {
-            "main_topic": "Unknown Topic",
-            "subtopics": [],
-            "key_concepts": [],
-            "difficulty": "intermediate"
-        }
-
     try:
         # Truncate text if too long (keep first portion)
         truncated_text = slide_text[:max_length] if len(slide_text) > max_length else slide_text
 
         logger.info(f"🤖 Extracting topics with GPT-4 from {len(truncated_text)} characters...")
 
-        response = client.chat.completions.create(
-            model="gpt-4",
+        response = call_with_retry(
             messages=[
                 {
                     "role": "system",
@@ -181,6 +169,7 @@ Return ONLY valid JSON in this exact format:
 }}"""
                 }
             ],
+            models=PLAN_MODELS,
             temperature=0.3,
             max_tokens=500
         )
@@ -206,6 +195,14 @@ Return ONLY valid JSON in this exact format:
                 "difficulty": "intermediate"
             }
 
+    except OpenAIError as e:
+        logger.warning(f"⚠️ OpenAI unavailable for topic extraction: {e}")
+        return {
+            "main_topic": "Lecture Content",
+            "subtopics": [],
+            "key_concepts": [],
+            "difficulty": "intermediate"
+        }
     except Exception as e:
         logger.error(f"❌ Error in GPT-4 topic extraction: {e}")
         return {

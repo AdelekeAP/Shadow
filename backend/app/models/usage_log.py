@@ -1,6 +1,6 @@
 """Usage logging model for tracking API request analytics."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -15,4 +15,4 @@ class UsageLog(Base):
     http_method = Column(String(10), nullable=False)
     status_code = Column(Integer, nullable=False)
     response_time_ms = Column(Float, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))

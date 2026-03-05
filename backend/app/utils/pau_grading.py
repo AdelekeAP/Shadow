@@ -2,6 +2,7 @@
 PAU-Specific Grading System Utilities
 35/65 CA/Exam Split with 5.0 Scale
 """
+import math
 from typing import Dict, Tuple, Optional
 
 # PAU Grade Scale (5.0 system)
@@ -36,7 +37,12 @@ def convert_score_to_grade(score: float) -> Dict[str, any]:
 
     Returns:
         Dict with grade, points, and description
+
+    Raises:
+        ValueError: If score is not a number or outside 0-100 range
     """
+    if not isinstance(score, (int, float)) or not math.isfinite(score) or score < 0 or score > 100:
+        raise ValueError(f"Score must be between 0 and 100, got {score}")
     for (min_score, max_score), grade_info in PAU_GRADE_SCALE.items():
         if min_score <= score <= max_score:
             return grade_info

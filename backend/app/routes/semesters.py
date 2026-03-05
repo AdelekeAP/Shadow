@@ -85,7 +85,11 @@ async def create_academic_year(
             detail=f"Academic year {year_str} already exists"
         )
 
-    # Deactivate all existing semesters
+    # Lock and deactivate all existing semesters to prevent concurrent activation race
+    db.query(Semester).filter(
+        Semester.user_id == current_user.id
+    ).with_for_update().all()
+
     db.query(Semester).filter(
         Semester.user_id == current_user.id
     ).update({"is_active": False})
@@ -191,7 +195,10 @@ async def activate_semester(
     current_user: User = Depends(get_user_from_token)
 ) -> Dict:
     """Activate a semester (deactivates all others)."""
-    sem_uuid = UUID(semester_id)
+    try:
+        sem_uuid = UUID(semester_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid semester ID format")
     semester = db.query(Semester).filter(
         Semester.id == sem_uuid,
         Semester.user_id == current_user.id
@@ -199,6 +206,11 @@ async def activate_semester(
 
     if not semester:
         raise HTTPException(status_code=404, detail="Semester not found")
+
+    # Lock all user semesters to prevent concurrent activation race
+    db.query(Semester).filter(
+        Semester.user_id == current_user.id
+    ).with_for_update().all()
 
     # Deactivate all, then activate target
     db.query(Semester).filter(
@@ -224,7 +236,10 @@ async def update_semester(
     current_user: User = Depends(get_user_from_token)
 ) -> Dict:
     """Update semester name, target GPA, or active status."""
-    sem_uuid = UUID(semester_id)
+    try:
+        sem_uuid = UUID(semester_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid semester ID format")
     semester = db.query(Semester).filter(
         Semester.id == sem_uuid,
         Semester.user_id == current_user.id
@@ -234,6 +249,18 @@ async def update_semester(
         raise HTTPException(status_code=404, detail="Semester not found")
 
     update_data = request.dict(exclude_unset=True)
+
+    # If activating via update, lock and deactivate all other semesters first
+    if update_data.get("is_active") is True:
+        db.query(Semester).filter(
+            Semester.user_id == current_user.id
+        ).with_for_update().all()
+
+        db.query(Semester).filter(
+            Semester.user_id == current_user.id,
+            Semester.id != sem_uuid
+        ).update({"is_active": False})
+
     for field, value in update_data.items():
         setattr(semester, field, value)
 
@@ -254,7 +281,10 @@ async def delete_semester(
     current_user: User = Depends(get_user_from_token)
 ):
     """Delete a semester. Courses in this semester become unassigned."""
-    sem_uuid = UUID(semester_id)
+    try:
+        sem_uuid = UUID(semester_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid semester ID format")
     semester = db.query(Semester).filter(
         Semester.id == sem_uuid,
         Semester.user_id == current_user.id
@@ -286,7 +316,10 @@ async def assign_courses_to_semester(
     current_user: User = Depends(get_user_from_token)
 ) -> Dict:
     """Bulk-assign user courses to a semester."""
-    sem_uuid = UUID(semester_id)
+    try:
+        sem_uuid = UUID(semester_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid semester ID format")
     semester = db.query(Semester).filter(
         Semester.id == sem_uuid,
         Semester.user_id == current_user.id

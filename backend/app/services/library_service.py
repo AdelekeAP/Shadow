@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, update
 
 from app.models.library import LibraryDocument, LibraryVote
 from app.models.course import Course
@@ -408,11 +408,11 @@ def contribute_to_library(
         return result
 
     except Exception as e:
-        logger.error(f"❌ Error contributing to library: {e}")
+        logger.error(f"❌ Error contributing to library: {e}", exc_info=True)
         db.rollback()
         return {
             "success": False,
-            "error": str(e)
+            "error": "Failed to upload document to library"
         }
 
 
@@ -647,30 +647,24 @@ def vote_on_document(
 
 def increment_view_count(db: Session, document_id: str) -> bool:
     """
-    Increment view count for a document
+    Atomically increment view count for a document.
 
-    Args:
-        db: Database session
-        document_id: Document UUID
-
-    Returns:
-        True if successful
+    Uses SQL UPDATE to avoid read-modify-write race conditions.
     """
     if not _validate_uuid(document_id):
         logger.warning(f"⚠️ Invalid UUID in increment_view_count: {document_id}")
         return False
     try:
-        document = db.query(LibraryDocument).filter(
-            LibraryDocument.id == document_id
-        ).first()
-
-        if document:
-            document.view_count += 1
-            document.last_accessed = datetime.now(timezone.utc)
-            db.commit()
-            return True
-
-        return False
+        rows = db.execute(
+            update(LibraryDocument)
+            .where(LibraryDocument.id == document_id)
+            .values(
+                view_count=LibraryDocument.view_count + 1,
+                last_accessed=datetime.now(timezone.utc)
+            )
+        )
+        db.commit()
+        return rows.rowcount > 0
 
     except Exception as e:
         logger.error(f"❌ Error incrementing view count: {e}")
@@ -680,29 +674,21 @@ def increment_view_count(db: Session, document_id: str) -> bool:
 
 def increment_download_count(db: Session, document_id: str) -> bool:
     """
-    Increment download count for a document
+    Atomically increment download count for a document.
 
-    Args:
-        db: Database session
-        document_id: Document UUID
-
-    Returns:
-        True if successful
+    Uses SQL UPDATE to avoid read-modify-write race conditions.
     """
     if not _validate_uuid(document_id):
         logger.warning(f"⚠️ Invalid UUID in increment_download_count: {document_id}")
         return False
     try:
-        document = db.query(LibraryDocument).filter(
-            LibraryDocument.id == document_id
-        ).first()
-
-        if document:
-            document.download_count += 1
-            db.commit()
-            return True
-
-        return False
+        rows = db.execute(
+            update(LibraryDocument)
+            .where(LibraryDocument.id == document_id)
+            .values(download_count=LibraryDocument.download_count + 1)
+        )
+        db.commit()
+        return rows.rowcount > 0
 
     except Exception as e:
         logger.error(f"❌ Error incrementing download count: {e}")
@@ -710,32 +696,57 @@ def increment_download_count(db: Session, document_id: str) -> bool:
         return False
 
 
-def get_user_contributions(db: Session, user_id: str) -> Dict[str, Any]:
+def get_user_contributions(
+    db: Session,
+    user_id: str,
+    limit: int = 50,
+    offset: int = 0
+) -> Dict[str, Any]:
     """
     Get statistics about user's library contributions
 
     Args:
         db: Database session
         user_id: User UUID
+        limit: Max documents per page (default 50)
+        offset: Pagination offset
 
     Returns:
-        Dict with contribution stats
+        Dict with contribution stats and paginated documents
     """
     try:
-        documents = db.query(LibraryDocument).filter(
+        base_query = db.query(LibraryDocument).filter(
             LibraryDocument.uploaded_by == user_id
-        ).all()
+        )
 
-        total_views = sum(doc.view_count for doc in documents)
-        total_downloads = sum(doc.download_count for doc in documents)
-        total_votes = sum(doc.helpful_votes for doc in documents)
+        # Aggregate stats across ALL documents (not paginated)
+        total_count = base_query.count()
+        agg = db.query(
+            func.coalesce(func.sum(LibraryDocument.view_count), 0),
+            func.coalesce(func.sum(LibraryDocument.download_count), 0),
+            func.coalesce(func.sum(LibraryDocument.helpful_votes), 0),
+        ).filter(
+            LibraryDocument.uploaded_by == user_id
+        ).first()
+
+        total_views = int(agg[0])
+        total_downloads = int(agg[1])
+        total_votes = int(agg[2])
+
+        # Paginated document list
+        documents = base_query.options(
+            joinedload(LibraryDocument.course)
+        ).order_by(
+            LibraryDocument.uploaded_at.desc()
+        ).limit(limit).offset(offset).all()
 
         return {
-            "total_documents": len(documents),
+            "total_documents": total_count,
             "total_views": total_views,
             "total_downloads": total_downloads,
             "total_helpful_votes": total_votes,
-            "documents": [doc.to_dict() for doc in documents]
+            "documents": [doc.to_dict() for doc in documents],
+            "has_more": (offset + limit) < total_count
         }
 
     except Exception as e:
@@ -745,5 +756,6 @@ def get_user_contributions(db: Session, user_id: str) -> Dict[str, Any]:
             "total_views": 0,
             "total_downloads": 0,
             "total_helpful_votes": 0,
-            "documents": []
+            "documents": [],
+            "has_more": False
         }

@@ -4,7 +4,7 @@ Finds documentation, articles, practice exercises, and learning resources for st
 """
 import logging
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -611,7 +611,7 @@ class ResourceFinder:
 
         results = {
             'topic': topic,
-            'found_at': datetime.utcnow().isoformat(),
+            'found_at': datetime.now(timezone.utc).isoformat(),
             'resources': {}
         }
 

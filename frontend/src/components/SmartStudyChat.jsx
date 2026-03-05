@@ -45,6 +45,25 @@ export default function SmartStudyChat({ onClose }) {
     } catch (e) { console.error('Error loading suggested prompts:', e) }
   }
 
+  const fallbackToNonStreaming = async (content) => {
+    try {
+      const r = await api.post('/api/v1/smartstudy/chat', { content, conversation_id: conversationId })
+      if (!conversationId && r.data.conversation_id) setConversationId(r.data.conversation_id)
+      setMessages(prev => [...prev, { role: 'assistant', content: r.data.ai_response, tokens_used: r.data.tokens_used }])
+    } catch (e) {
+      console.error('SmartStudy chat error:', e)
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: 'Sorry, I encountered an error. Please try again.',
+        error: true,
+        originalContent: content,
+      }])
+    } finally {
+      setLoading(false)
+      setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }
+
   const sendMessage = async (messageText) => {
     const content = (messageText || input).trim()
     if (!content) return
@@ -54,16 +73,94 @@ export default function SmartStudyChat({ onClose }) {
     setShowSuggestions(false)
     setLoading(true)
 
+    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    const token = localStorage.getItem('access_token')
+
+    let response
     try {
-      const r = await api.post('/api/v1/smartstudy/chat', { content, conversation_id: conversationId })
-      if (!conversationId && r.data.conversation_id) setConversationId(r.data.conversation_id)
-      setMessages(prev => [...prev, { role: 'assistant', content: r.data.ai_response, tokens_used: r.data.tokens_used }])
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.', error: true }])
+      response = await fetch(`${baseUrl}/api/v1/smartstudy/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ content, conversation_id: conversationId }),
+      })
+    } catch (e) {
+      console.error('Streaming connection error:', e)
+      // Network error — fall back to non-streaming
+      return fallbackToNonStreaming(content)
+    }
+
+    if (!response.ok) {
+      // Server error — fall back to non-streaming
+      return fallbackToNonStreaming(content)
+    }
+
+    // Add placeholder streaming message
+    const streamIdx = messages.length + 1 // index of the AI message we'll add
+    setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true }])
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() // keep incomplete chunk
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data: ')) continue
+          let event
+          try { event = JSON.parse(trimmed.slice(6)) } catch { continue }
+
+          if (event.type === 'meta') {
+            if (!conversationId && event.conversation_id) setConversationId(event.conversation_id)
+          } else if (event.type === 'token') {
+            setMessages(prev => prev.map((msg, i) =>
+              i === streamIdx ? { ...msg, content: msg.content + event.content } : msg
+            ))
+          } else if (event.type === 'done') {
+            setMessages(prev => prev.map((msg, i) =>
+              i === streamIdx ? { ...msg, streaming: false } : msg
+            ))
+          } else if (event.type === 'error') {
+            setMessages(prev => prev.map((msg, i) =>
+              i === streamIdx
+                ? { ...msg, streaming: false, error: true, content: event.message, originalContent: content }
+                : msg
+            ))
+          }
+        }
+      }
+
+      // Ensure streaming flag is cleared even if no done event
+      setMessages(prev => prev.map((msg, i) =>
+        i === streamIdx && msg.streaming ? { ...msg, streaming: false } : msg
+      ))
+    } catch (e) {
+      console.error('Stream read error:', e)
+      setMessages(prev => prev.map((msg, i) =>
+        i === streamIdx
+          ? { ...msg, streaming: false, error: true, content: 'Connection lost. Please try again.', originalContent: content }
+          : msg
+      ))
     } finally {
       setLoading(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
+  }
+
+  const retryMessage = (originalContent) => {
+    // Remove the error message and re-send
+    setMessages(prev => prev.slice(0, -1))
+    sendMessage(originalContent)
   }
 
   const startNewConversation = () => {
@@ -290,9 +387,24 @@ export default function SmartStudyChat({ onClose }) {
               }`}>
                 {msg.role === 'user' ? (
                   <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                ) : msg.error ? (
+                  <div>
+                    <p className="text-[13px] leading-relaxed">{msg.content}</p>
+                    {msg.originalContent && (
+                      <button
+                        onClick={() => retryMessage(msg.originalContent)}
+                        className="mt-2 px-3 py-1 text-[11px] font-semibold bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <div className="prose-chat text-[13px] leading-relaxed">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    {msg.streaming && (
+                      <span className="inline-block w-1.5 h-4 bg-navy-600 animate-pulse ml-0.5 -mb-0.5 rounded-sm" />
+                    )}
                   </div>
                 )}
                 {msg.tokens_used && (
@@ -302,8 +414,8 @@ export default function SmartStudyChat({ onClose }) {
             </div>
           ))}
 
-          {/* Loading dots */}
-          {loading && (
+          {/* Loading dots — only when not already streaming */}
+          {loading && !messages.some(m => m.streaming) && (
             <div className="flex justify-start">
               <div className="w-6 h-6 rounded-lg bg-navy-800 flex items-center justify-center flex-shrink-0 mr-2.5 mt-1">
                 <SparkleIcon className="w-3 h-3 text-white" />

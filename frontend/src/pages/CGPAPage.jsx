@@ -4,11 +4,40 @@ import { useAuth } from '../contexts/AuthContext'
 import CGPADashboard from '../components/CGPADashboard'
 import WhatIfCalculator from '../components/WhatIfCalculator'
 import NotificationBell from '../components/NotificationBell'
+import { exportCGPApdf } from '../services/api'
 
 export default function CGPAPage() {
   const navigate = useNavigate()
   const { logout: doLogout } = useAuth()
   const [showWhatIf, setShowWhatIf] = useState(false)
+  const [exporting, setExporting] = useState(null)
+
+  const handleExportPdf = async () => {
+    setExporting('pdf')
+    try {
+      const response = await exportCGPApdf()
+
+      // Extract filename from Content-Disposition header
+      const disposition = response.headers['content-disposition']
+      const filenameMatch = disposition?.match(/filename="(.+)"/)
+      const filename = filenameMatch ? filenameMatch[1] : 'shadow-cgpa.pdf'
+
+      // Create download
+      const url = URL.createObjectURL(response.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Export PDF failed:', error)
+      alert('Failed to export PDF. Please try again.')
+    } finally {
+      setExporting(null)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-surface-50">
@@ -71,15 +100,29 @@ export default function CGPAPage() {
               </div>
               <p className="text-[13px] text-surface-400 mt-1">Track performance, predict outcomes, and plan your academic future</p>
             </div>
-            <button
-              onClick={() => setShowWhatIf(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-navy-800 hover:bg-navy-900 text-white rounded-xl text-[13px] font-semibold transition-all shadow-sm"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 15.75V18m-7.5-6.75h.008v.008H8.25v-.008Zm0 2.25h.008v.008H8.25V13.5Zm0 2.25h.008v.008H8.25v-.008Zm0 2.25h.008v.008H8.25V18Zm2.498-6.75h.007v.008h-.007v-.008Zm0 2.25h.007v.008h-.007V13.5Zm0 2.25h.007v.008h-.007v-.008Zm0 2.25h.007v.008h-.007V18Zm2.504-6.75h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V13.5Zm0 2.25h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V18Zm2.498-6.75h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V13.5ZM8.25 6h7.5v2.25h-7.5V6ZM12 2.25c-1.892 0-3.758.11-5.593.322C5.307 2.7 4.5 3.65 4.5 4.757V19.5a2.25 2.25 0 0 0 2.25 2.25h10.5a2.25 2.25 0 0 0 2.25-2.25V4.757c0-1.108-.806-2.057-1.907-2.185A48.507 48.507 0 0 0 12 2.25Z" />
-              </svg>
-              What-If Calculator
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleExportPdf}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-2.5 border border-surface-200 hover:border-surface-300 bg-white hover:bg-surface-50 text-navy-800 rounded-xl text-[13px] font-semibold transition-all disabled:opacity-50"
+              >
+                {exporting === 'pdf' ? (
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                )}
+                Export PDF
+              </button>
+              <button
+                onClick={() => setShowWhatIf(true)}
+                className="flex items-center gap-2 px-4 py-2.5 bg-navy-800 hover:bg-navy-900 text-white rounded-xl text-[13px] font-semibold transition-all shadow-sm"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 15.75V18m-7.5-6.75h.008v.008H8.25v-.008Zm0 2.25h.008v.008H8.25V13.5Zm0 2.25h.008v.008H8.25v-.008Zm0 2.25h.008v.008H8.25V18Zm2.498-6.75h.007v.008h-.007v-.008Zm0 2.25h.007v.008h-.007V13.5Zm0 2.25h.007v.008h-.007v-.008Zm0 2.25h.007v.008h-.007V18Zm2.504-6.75h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V13.5Zm0 2.25h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V18Zm2.498-6.75h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V13.5ZM8.25 6h7.5v2.25h-7.5V6ZM12 2.25c-1.892 0-3.758.11-5.593.322C5.307 2.7 4.5 3.65 4.5 4.757V19.5a2.25 2.25 0 0 0 2.25 2.25h10.5a2.25 2.25 0 0 0 2.25-2.25V4.757c0-1.108-.806-2.057-1.907-2.185A48.507 48.507 0 0 0 12 2.25Z" />
+                </svg>
+                What-If Calculator
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -117,8 +160,8 @@ export default function CGPAPage() {
                 {[
                   { name: 'First Class', range: '4.50 – 5.00', cls: 'border-emerald-300 bg-emerald-50 text-emerald-700' },
                   { name: 'Second Class Upper', range: '3.50 – 4.49', cls: 'border-blue-300 bg-blue-50 text-blue-700' },
-                  { name: 'Second Class Lower', range: '2.50 – 3.49', cls: 'border-amber-300 bg-amber-50 text-amber-700' },
-                  { name: 'Third Class', range: '1.50 – 2.49', cls: 'border-orange-300 bg-orange-50 text-orange-700' },
+                  { name: 'Second Class Lower', range: '2.40 – 3.49', cls: 'border-amber-300 bg-amber-50 text-amber-700' },
+                  { name: 'Third Class', range: '1.50 – 2.39', cls: 'border-orange-300 bg-orange-50 text-orange-700' },
                   { name: 'Pass', range: '1.00 – 1.49', cls: 'border-red-200 bg-red-50 text-red-600' },
                 ].map(c => (
                   <div key={c.name} className={`flex items-center justify-between px-3 py-1.5 rounded-lg border ${c.cls}`}>

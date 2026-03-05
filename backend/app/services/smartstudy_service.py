@@ -2,12 +2,10 @@
 SmartStudy Service - AI Learning Intervention System
 Handles GPT-4 chat, context loading, and personalized study plan generation
 """
-import os
 import logging
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Generator
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from openai import OpenAI
 import json
 
 from app.models.user import User
@@ -15,20 +13,15 @@ from app.models.task import Task
 from app.models.course import UserCourse, Course
 from app.models.mood import MoodLog
 from app.models.smartstudy import ChatConversation, ChatMessage, StudyPlan
+from app.services.openai_client import (
+    get_openai_client,
+    call_with_retry,
+    OpenAIError,
+    OpenAIErrorType,
+    CHAT_MODELS,
+)
 
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-client = None
-try:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        client = OpenAI(api_key=api_key)
-        logger.info("✅ OpenAI client initialized successfully")
-    else:
-        logger.warning("⚠️ OPENAI_API_KEY not found in environment variables")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize OpenAI client: {e}")
 
 
 def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
@@ -212,11 +205,6 @@ def chat_with_smartstudy(
     Returns:
         Dict with conversation_id, user_message, ai_response, tokens_used
     """
-    if not client:
-        return {
-            "error": "OpenAI client not initialized. Please check OPENAI_API_KEY."
-        }
-
     try:
         # Load or create conversation
         if conversation_id:
@@ -227,10 +215,10 @@ def chat_with_smartstudy(
             if not conversation:
                 return {"error": "Conversation not found"}
         else:
-            # Create new conversation
+            # Create new conversation (flush to get ID, commit with first message)
             conversation = ChatConversation(user_id=user_id)
             db.add(conversation)
-            db.commit()
+            db.flush()
             db.refresh(conversation)
 
         # Load student context
@@ -260,12 +248,14 @@ def chat_with_smartstudy(
             "content": message
         })
 
-        # Call GPT-4
-        response = client.chat.completions.create(
-            model="gpt-4",
+        # Call GPT-4 with retry/fallback
+        response = call_with_retry(
             messages=gpt_messages,
+            models=CHAT_MODELS,
             max_tokens=500,
-            temperature=0.7
+            temperature=0.7,
+            timeout=30.0,
+            stream=False,
         )
 
         ai_message = response.choices[0].message.content
@@ -306,10 +296,114 @@ def chat_with_smartstudy(
             "created_at": ai_msg.created_at.isoformat()
         }
 
+    except OpenAIError as e:
+        logger.error(f"OpenAI error in chat_with_smartstudy: {e.error_type.value}")
+        db.rollback()
+        return {"error": e.user_message, "error_type": e.error_type.value}
     except Exception as e:
         logger.error(f"Error in chat_with_smartstudy: {e}")
         db.rollback()
         return {"error": str(e)}
+
+
+def stream_chat_with_smartstudy(
+    db: Session,
+    user_id: str,
+    message: str,
+    conversation_id: Optional[str] = None,
+) -> Generator[str, None, None]:
+    """
+    Streaming version of chat_with_smartstudy.
+    Yields SSE-formatted events: meta, token, done, error.
+    """
+    try:
+        # Load or create conversation
+        if conversation_id:
+            conversation = db.query(ChatConversation).filter(
+                ChatConversation.id == conversation_id,
+                ChatConversation.user_id == user_id
+            ).first()
+            if not conversation:
+                yield f'data: {json.dumps({"type": "error", "error_type": "invalid_request", "message": "Conversation not found"})}\n\n'
+                return
+        else:
+            # Create new conversation (flush to get ID, commit with first message)
+            conversation = ChatConversation(user_id=user_id)
+            db.add(conversation)
+            db.flush()
+            db.refresh(conversation)
+
+        # Send meta event with conversation_id immediately
+        yield f'data: {json.dumps({"type": "meta", "conversation_id": str(conversation.id)})}\n\n'
+
+        # Load student context + build system prompt
+        context = load_student_context(db, user_id)
+        system_prompt = build_system_prompt(context)
+
+        # Get conversation history
+        messages_history = db.query(ChatMessage).filter(
+            ChatMessage.conversation_id == conversation.id
+        ).order_by(ChatMessage.created_at.asc()).all()
+
+        gpt_messages = [{"role": "system", "content": system_prompt}]
+        for msg in messages_history[-10:]:
+            gpt_messages.append({"role": msg.role, "content": msg.content})
+        gpt_messages.append({"role": "user", "content": message})
+
+        # Call GPT-4 with streaming
+        stream = call_with_retry(
+            messages=gpt_messages,
+            models=CHAT_MODELS,
+            max_tokens=500,
+            temperature=0.7,
+            timeout=30.0,
+            stream=True,
+        )
+
+        # Iterate over streamed chunks
+        full_content = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                full_content += delta.content
+                yield f'data: {json.dumps({"type": "token", "content": delta.content})}\n\n'
+
+        # Save user message
+        user_msg = ChatMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=message,
+            model_used="gpt-4",
+        )
+        db.add(user_msg)
+
+        # Save AI response
+        ai_msg = ChatMessage(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=full_content,
+            model_used="gpt-4",
+        )
+        db.add(ai_msg)
+
+        # Update conversation title if first message
+        if not conversation.title:
+            conversation.title = message[:50] + ("..." if len(message) > 50 else "")
+
+        conversation.updated_at = datetime.now()
+        db.commit()
+
+        # Send done event
+        yield f'data: {json.dumps({"type": "done", "conversation_id": str(conversation.id), "created_at": ai_msg.created_at.isoformat()})}\n\n'
+
+    except OpenAIError as e:
+        logger.error(f"OpenAI error in stream_chat: {e.error_type.value}")
+        db.rollback()
+        yield f'data: {json.dumps({"type": "error", "error_type": e.error_type.value, "message": e.user_message})}\n\n'
+    except Exception as e:
+        logger.error(f"Error in stream_chat: {e}")
+        db.rollback()
+        yield f'data: {json.dumps({"type": "error", "error_type": "unknown", "message": "An unexpected error occurred. Please try again."})}\n\n'
 
 
 def check_smartstudy_triggers(db: Session, user_id: str) -> Dict[str, Any]:

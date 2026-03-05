@@ -2,13 +2,11 @@
 Study Plan Generator Service - GPT-4 Powered Personalized Learning Plans
 Generates day-by-day study plans based on student context and needs
 """
-import os
 import logging
 import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from openai import OpenAI
 
 from app.models.user import User
 from app.models.task import Task
@@ -18,20 +16,17 @@ from app.models.smartstudy import StudyPlan, StudyPlanResource
 from app.services.smartstudy_service import load_student_context
 from app.services.content_curator import get_content_curator
 from app.services.resource_finder import get_resource_finder
+from app.services.openai_client import (
+    get_openai_client,
+    call_with_retry,
+    OpenAIError,
+    PLAN_MODELS,
+)
 
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI client
-client = None
-try:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        client = OpenAI(api_key=api_key)
-        logger.info("✅ OpenAI client initialized for study plan generation")
-    else:
-        logger.warning("⚠️ OPENAI_API_KEY not found")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize OpenAI client: {e}")
+# Max characters of slide content to include in prompts (~5K tokens)
+MAX_SLIDE_CONTENT_CHARS = 20000
 
 
 def calculate_optimal_duration(student_context: Dict[str, Any], topic: str) -> int:
@@ -156,7 +151,7 @@ This study plan should help improve performance in this specific course.
 {f'''
 The student has uploaded their lecture slides. Use this content to personalize the plan:
 ---
-{slide_content[:50000] if slide_content else ""}
+{slide_content[:MAX_SLIDE_CONTENT_CHARS] if slide_content else ""}
 ---
 IMPORTANT: Reference concepts from these slides, use slide examples, and fill knowledge gaps not covered in slides.
 ''' if slide_content else ''}
@@ -319,11 +314,6 @@ def generate_study_plan(
     Returns:
         Dict with study plan details and database ID
     """
-    if not client:
-        return {
-            "error": "OpenAI client not initialized. Please check OPENAI_API_KEY."
-        }
-
     try:
         # Load student context
         context = load_student_context(db, user_id)
@@ -351,9 +341,8 @@ def generate_study_plan(
             context, topic, course_code, duration_days, difficulty_level, slide_content
         )
 
-        # Call GPT-4 Turbo (128K context window - handles large slide content)
-        response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",  # Upgraded to handle large prompts with slide content
+        # Call GPT-4 Turbo with retry/fallback
+        response = call_with_retry(
             messages=[
                 {
                     "role": "system",
@@ -364,8 +353,11 @@ def generate_study_plan(
                     "content": prompt
                 }
             ],
+            models=PLAN_MODELS,
             temperature=0.7,
-            max_tokens=4000  # Sufficient with 128K context window
+            max_tokens=4000,
+            timeout=60.0,
+            stream=False,
         )
 
         gpt_response = response.choices[0].message.content
@@ -395,7 +387,7 @@ def generate_study_plan(
         )
 
         db.add(study_plan)
-        db.commit()
+        db.flush()  # Get plan.id for FK references without committing
         db.refresh(study_plan)
 
         logger.info(f"✅ Study plan created with ID: {study_plan.id}")
@@ -709,7 +701,9 @@ def generate_study_plan(
                         completed=False
                     )
                     db.add(resource)
-            db.commit()
+
+        # Single atomic commit for plan + all resources
+        db.commit()
 
         return {
             "study_plan_id": str(study_plan.id),
@@ -720,6 +714,10 @@ def generate_study_plan(
             "created_at": study_plan.created_at.isoformat()
         }
 
+    except OpenAIError as e:
+        logger.error(f"❌ OpenAI error generating study plan: {e.error_type.value}")
+        db.rollback()
+        return {"error": e.user_message}
     except Exception as e:
         logger.error(f"❌ Error generating study plan: {e}")
         db.rollback()

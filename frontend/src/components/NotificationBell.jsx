@@ -67,10 +67,35 @@ export default function NotificationBell() {
   const [error, setError] = useState(null)
   const ref = useRef(null)
 
+  // Smart polling: pause when tab is hidden, use longer interval when idle
   useEffect(() => {
     fetchCount()
-    const iv = setInterval(fetchCount, 30000)
-    return () => clearInterval(iv)
+    let iv = null
+    let interval = 30000 // 30s default
+
+    const startPolling = () => {
+      if (iv) clearInterval(iv)
+      iv = setInterval(fetchCount, interval)
+    }
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        // Pause polling when tab not visible
+        if (iv) { clearInterval(iv); iv = null }
+      } else {
+        // Resume with fresh fetch
+        fetchCount()
+        interval = 30000
+        startPolling()
+      }
+    }
+
+    startPolling()
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      if (iv) clearInterval(iv)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [])
 
   useEffect(() => {
@@ -82,27 +107,55 @@ export default function NotificationBell() {
   useEffect(() => { if (isOpen) fetchList() }, [isOpen])
 
   const fetchCount = async () => {
-    try { const d = await getNotificationCount(); setUnreadCount(d.unread_count); setTotalCount(d.total_count) }
-    catch {}
+    try {
+      const d = await getNotificationCount()
+      setUnreadCount(d.unread_count); setTotalCount(d.total_count)
+      setError(null)
+    } catch (err) {
+      console.error('Notification count fetch failed:', err)
+    }
   }
   const fetchList = async () => {
     setLoading(true); setError(null)
-    try { const d = await getNotifications({ limit: 20 }); setNotifications(d.notifications); setUnreadCount(d.unread_count); setTotalCount(d.total_count) }
-    catch { setError(true) }
-    finally { setLoading(false) }
+    try {
+      const d = await getNotifications({ limit: 20 })
+      setNotifications(d.notifications); setUnreadCount(d.unread_count); setTotalCount(d.total_count)
+    } catch (err) {
+      console.error('Notification list fetch failed:', err)
+      setError(true)
+    } finally { setLoading(false) }
   }
   const markRead = async (id) => {
-    try { await markNotificationRead(id); setNotifications(p => p.map(n => n.id === id ? { ...n, is_read: true } : n)); setUnreadCount(p => Math.max(0, p - 1)) }
-    catch {}
+    // Optimistic update
+    setNotifications(p => p.map(n => n.id === id ? { ...n, is_read: true } : n))
+    setUnreadCount(p => Math.max(0, p - 1))
+    try { await markNotificationRead(id) }
+    catch (err) {
+      console.error('Mark read failed:', err)
+      // Revert on failure
+      setNotifications(p => p.map(n => n.id === id ? { ...n, is_read: false } : n))
+      setUnreadCount(p => p + 1)
+    }
   }
   const markAllRead = async () => {
-    try { await markAllNotificationsRead(); setNotifications(p => p.map(n => ({ ...n, is_read: true }))); setUnreadCount(0) }
-    catch {}
+    const prev = notifications.map(n => ({ ...n }))
+    const prevCount = unreadCount
+    setNotifications(p => p.map(n => ({ ...n, is_read: true }))); setUnreadCount(0)
+    try { await markAllNotificationsRead() }
+    catch (err) {
+      console.error('Mark all read failed:', err)
+      setNotifications(prev); setUnreadCount(prevCount)
+    }
   }
   const dismiss = async (id, e) => {
     e.stopPropagation()
-    try { await dismissNotification(id); setNotifications(p => p.filter(n => n.id !== id)); setTotalCount(p => p - 1) }
-    catch {}
+    const prev = notifications
+    setNotifications(p => p.filter(n => n.id !== id)); setTotalCount(p => p - 1)
+    try { await dismissNotification(id) }
+    catch (err) {
+      console.error('Dismiss failed:', err)
+      setNotifications(prev); setTotalCount(p => p + 1)
+    }
   }
   const clickNotif = (n) => {
     if (!n.is_read) markRead(n.id)

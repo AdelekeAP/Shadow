@@ -144,15 +144,29 @@ class TestConvertScoreToGrade:
 
     # --- Edge cases ---
 
-    def test_negative_score_returns_F(self):
-        result = convert_score_to_grade(-5)
-        assert result["grade"] == "F"
-        assert result["points"] == 0.0
+    def test_negative_score_raises_error(self):
+        with pytest.raises(ValueError, match="Score must be between 0 and 100"):
+            convert_score_to_grade(-5)
 
-    def test_score_above_100_returns_F(self):
-        # Scores above 100 are not in any range, so should fallback to F
-        result = convert_score_to_grade(105)
-        assert result["grade"] == "F"
+    def test_score_above_100_raises_error(self):
+        with pytest.raises(ValueError, match="Score must be between 0 and 100"):
+            convert_score_to_grade(105)
+
+    def test_nan_score_raises_error(self):
+        with pytest.raises(ValueError, match="Score must be between 0 and 100"):
+            convert_score_to_grade(float('nan'))
+
+    def test_inf_score_raises_error(self):
+        with pytest.raises(ValueError, match="Score must be between 0 and 100"):
+            convert_score_to_grade(float('inf'))
+
+    def test_negative_inf_score_raises_error(self):
+        with pytest.raises(ValueError, match="Score must be between 0 and 100"):
+            convert_score_to_grade(float('-inf'))
+
+    def test_none_score_raises_error(self):
+        with pytest.raises(ValueError, match="Score must be between 0 and 100"):
+            convert_score_to_grade(None)
 
     # --- Mid-range verification ---
 

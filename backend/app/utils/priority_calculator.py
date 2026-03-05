@@ -2,7 +2,7 @@
 Priority Calculator - Smart task prioritization based on multiple factors
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from app.models.task import Task
@@ -35,7 +35,11 @@ class PriorityCalculator:
         if not task.due_date:
             return 5.0  # Neutral score if no due date
 
-        days_until_due = (task.due_date - datetime.utcnow()).days
+        # Ensure timezone-aware comparison
+        due_date = task.due_date
+        if due_date.tzinfo is None:
+            due_date = due_date.replace(tzinfo=timezone.utc)
+        days_until_due = (due_date - datetime.now(timezone.utc)).days
 
         # Scoring:
         # Overdue: 10
@@ -76,7 +80,16 @@ class PriorityCalculator:
         return min(10.0, (weight / max_weight) * 10)
 
     @staticmethod
-    def calculate_mood_score(task: Task, user: User, db: Session) -> float:
+    def get_recent_mood(user: User, db: Session) -> "Optional[MoodLog]":
+        """Get the most recent mood within last 24 hours (cacheable per-request)."""
+        from app.models.mood import MoodLog
+        return db.query(MoodLog).filter(
+            MoodLog.user_id == user.id,
+            MoodLog.logged_at >= datetime.now(timezone.utc) - timedelta(hours=24)
+        ).order_by(MoodLog.logged_at.desc()).first()
+
+    @staticmethod
+    def calculate_mood_score(task: Task, user: User, db: Session, recent_mood=None) -> float:
         """
         Calculate mood alignment score (0-10)
 
@@ -89,18 +102,14 @@ class PriorityCalculator:
             task: Task object
             user: User object
             db: Database session
+            recent_mood: Pre-fetched mood (avoids repeated DB queries)
 
         Returns:
             Mood alignment score (0-10)
         """
-        from app.models.mood import MoodLog
-        from datetime import datetime, timedelta
-
-        # Get most recent mood (within last 24 hours)
-        recent_mood = db.query(MoodLog).filter(
-            MoodLog.user_id == user.id,
-            MoodLog.logged_at >= datetime.utcnow() - timedelta(hours=24)
-        ).order_by(MoodLog.logged_at.desc()).first()
+        # Use pre-fetched mood or query DB
+        if recent_mood is None:
+            recent_mood = PriorityCalculator.get_recent_mood(user, db)
 
         # If no recent mood, return neutral score
         if not recent_mood:
@@ -174,9 +183,9 @@ class PriorityCalculator:
 
             cgpa_gap = abs(target_cgpa - current_cgpa)
 
-            # If current > target, less urgency (already exceeding)
+            # If current > target, neutral (don't penalize high performers)
             if current_cgpa >= target_cgpa:
-                return 3.0
+                return 5.0
 
             # Calculate impact: larger gap = higher impact
             # Max gap of 2.0 points = score of 10
@@ -197,7 +206,8 @@ class PriorityCalculator:
     def calculate_priority_score(
         task: Task,
         user: User,
-        db: Session
+        db: Session,
+        recent_mood=None
     ) -> Dict:
         """
         Calculate overall priority score for a task
@@ -208,13 +218,14 @@ class PriorityCalculator:
             task: Task object
             user: User object
             db: Database session
+            recent_mood: Pre-fetched mood (avoids repeated DB queries)
 
         Returns:
             Dict with priority score and breakdown
         """
         urgency_score = PriorityCalculator.calculate_urgency_score(task)
         weight_score = PriorityCalculator.calculate_weight_impact_score(task)
-        mood_score = PriorityCalculator.calculate_mood_score(task, user, db)
+        mood_score = PriorityCalculator.calculate_mood_score(task, user, db, recent_mood=recent_mood)
         goal_score = PriorityCalculator.calculate_goal_impact_score(task, user, db)
 
         # Weighted sum
@@ -285,33 +296,54 @@ class PriorityCalculator:
         Returns:
             List of recommended tasks with priority scores
         """
-        # Get all pending tasks
+        from sqlalchemy.orm import joinedload
+
+        # Get pending tasks (capped at 200 to prevent resource exhaustion)
         pending_tasks = db.query(Task).filter(
             Task.user_id == user.id,
             Task.is_completed == False
-        ).all()
+        ).limit(200).all()
 
         if not pending_tasks:
             return []
+
+        # Cache mood lookup (single query for all tasks)
+        recent_mood = PriorityCalculator.get_recent_mood(user, db)
+
+        # Batch-load course info (fixes N+1 query)
+        uc_ids = list({t.user_course_id for t in pending_tasks if t.user_course_id})
+        uc_map = {}
+        if uc_ids:
+            user_courses = db.query(UserCourse).options(
+                joinedload(UserCourse.course)
+            ).filter(UserCourse.id.in_(uc_ids)).all()
+            uc_map = {uc.id: uc for uc in user_courses}
+
+        now = datetime.now(timezone.utc)
 
         # Calculate priority for each task
         recommendations = []
         for task in pending_tasks:
             priority_breakdown = PriorityCalculator.calculate_priority_score(
-                task, user, db
+                task, user, db, recent_mood=recent_mood
             )
 
             recommendation_type = PriorityCalculator.get_recommendation_type(
                 task, priority_breakdown
             )
 
-            # Get course info
-            user_course = db.query(UserCourse).filter(
-                UserCourse.id == task.user_course_id
-            ).first()
-
+            # Look up course from batch-loaded map
+            user_course = uc_map.get(task.user_course_id)
             course_code = user_course.course.code if user_course and user_course.course else 'Unknown'
             course_title = user_course.course.title if user_course and user_course.course else 'Unknown Course'
+
+            # Timezone-safe overdue check
+            is_overdue = False
+            if task.due_date:
+                due = task.due_date
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=timezone.utc)
+                is_overdue = due < now
 
             recommendations.append({
                 'task_id': str(task.id),
@@ -328,7 +360,7 @@ class PriorityCalculator:
                 'mood_score': priority_breakdown['mood_score'],
                 'goal_score': priority_breakdown['goal_score'],
                 'recommendation_type': recommendation_type,
-                'is_overdue': task.due_date < datetime.utcnow() if task.due_date else False
+                'is_overdue': is_overdue,
             })
 
         # Sort by priority score (descending)

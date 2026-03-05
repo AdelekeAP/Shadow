@@ -132,6 +132,19 @@ function UploadModal({ onClose, onSuccess }) {
   const VALID_MIME_TYPES = ['application/pdf', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation']
   const VALID_EXTENSIONS = ['.pdf', '.pptx', '.ppt']
 
+  const suggestTopicFromFilename = (filename) => {
+    // Strip extension, replace separators with spaces, clean up
+    let name = filename.replace(/\.[^.]+$/, '')
+    name = name.replace(/[-_]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2')
+    // Remove common prefixes like "Week 3 -" or "CSC401_"
+    name = name.replace(/^(week\s*\d+\s*[-–—]?\s*)/i, '')
+    name = name.replace(/^[A-Z]{2,4}\d{3,4}[\s_-]*/i, '')
+    name = name.trim()
+    if (name.length < 2) return ''
+    // Title case
+    return name.replace(/\b\w/g, c => c.toUpperCase())
+  }
+
   const validateAndSetFile = (f) => {
     if (!f) return
     const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase()
@@ -142,6 +155,11 @@ function UploadModal({ onClose, onSuccess }) {
     if (f.size > 10 * 1024 * 1024) { setError('Maximum file size is 10 MB.'); return }
     setFile(f)
     setError(null)
+    // Auto-suggest topic from filename if topic is empty
+    if (!topic) {
+      const suggested = suggestTopicFromFilename(f.name)
+      if (suggested) setTopic(suggested)
+    }
   }
 
   const handleFile = (e) => validateAndSetFile(e.target.files[0])
@@ -311,6 +329,7 @@ function UploadModal({ onClose, onSuccess }) {
             <label className="flex items-baseline gap-1.5 mb-1.5">
               <span className="text-[12px] font-semibold text-navy-800 uppercase tracking-wider">Topic</span>
               <span className="text-red-400 text-[10px]">*</span>
+              {file && topic && <span className="text-[10px] text-surface-300 normal-case tracking-normal font-normal ml-1">suggested from filename — edit if needed</span>}
             </label>
             <input type="text" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g., Binary Search Trees" className={inputCls} required />
           </div>

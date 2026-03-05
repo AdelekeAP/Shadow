@@ -9,7 +9,7 @@ from datetime import datetime
 class UserCreate(BaseModel):
     """Schema for user registration"""
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=100)
+    password: str = Field(..., min_length=8, max_length=72)
     full_name: str = Field(..., min_length=2, max_length=255)
     university_id: Optional[str] = Field(None, max_length=50)
     entry_level: Optional[str] = Field("400L", max_length=10)
@@ -27,6 +27,12 @@ class UserCreate(BaseModel):
     def validate_password(cls, v):
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
+        if not any(c.isupper() for c in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not any(c.islower() for c in v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not any(c.isdigit() for c in v):
+            raise ValueError('Password must contain at least one number')
         return v
 
 
@@ -66,3 +72,18 @@ class TokenData(BaseModel):
     """Schema for token payload data"""
     email: Optional[str] = None
     user_id: Optional[str] = None
+
+
+class UserPreferencesUpdate(BaseModel):
+    """Schema for updating user preferences with explicit validation."""
+    learning_style: Optional[str] = None
+    preferred_learning_style: Optional[str] = None
+    target_cgpa: Optional[float] = Field(None, ge=0.0, le=5.0)
+
+    @validator('learning_style', 'preferred_learning_style')
+    def validate_learning_style(cls, v):
+        if v is not None:
+            valid = {'visual', 'auditory', 'reading', 'kinesthetic'}
+            if v not in valid:
+                raise ValueError(f'learning_style must be one of {valid}')
+        return v

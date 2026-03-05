@@ -1013,8 +1013,8 @@ async def upload_to_library(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error in upload_to_library: {e}")
+        logger.error(f"Error in upload_to_library: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to upload document to library"
         )

@@ -2,7 +2,7 @@
 Authentication Utilities
 JWT token generation/validation and password hashing
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -16,7 +16,14 @@ from app.database import get_db
 load_dotenv()
 
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    import warnings
+    warnings.warn(
+        "SECRET_KEY not set — using insecure default. Set SECRET_KEY in .env for production.",
+        stacklevel=2,
+    )
+    SECRET_KEY = "dev-only-insecure-key-change-in-production"
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
@@ -26,7 +33,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
-    Verify a plain password against a hashed password
+    Verify a plain password against a hashed password.
+
+    Uses bcrypt's timing-safe comparison to prevent timing attacks.
+    The comparison time is constant regardless of where the password
+    differs from the hash.
 
     Args:
         plain_password: Plain text password
@@ -40,9 +51,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """
-    Hash a password using bcrypt
+    Hash a password using bcrypt.
 
-    Note: bcrypt has a 72-byte limit, so we truncate if needed
+    The schema layer enforces max 72 characters (bcrypt's limit),
+    so no truncation is needed here.
 
     Args:
         password: Plain text password
@@ -50,10 +62,7 @@ def get_password_hash(password: str) -> str:
     Returns:
         Hashed password
     """
-    # Truncate password to 72 bytes (bcrypt limit)
-    password_bytes = password.encode('utf-8')[:72]
-    password_truncated = password_bytes.decode('utf-8', errors='ignore')
-    return pwd_context.hash(password_truncated)
+    return pwd_context.hash(password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -70,9 +79,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode = data.copy()
 
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -143,8 +152,13 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    from app.utils.token_blacklist import is_blacklisted
+
     payload = decode_access_token(token)
     if not payload:
+        raise credentials_exception
+
+    if is_blacklisted(token):
         raise credentials_exception
 
     email: str = payload.get("sub")
@@ -163,6 +177,12 @@ async def get_current_user(
     user = db.query(User).filter(User.id == user_uuid).first()
     if user is None:
         raise credentials_exception
+
+    # Validate token version (allows forced session invalidation)
+    token_version = payload.get("token_version", 0)
+    if hasattr(user, 'token_version') and user.token_version is not None:
+        if user.token_version != token_version:
+            raise credentials_exception
 
     if not user.is_active:
         raise HTTPException(

@@ -95,54 +95,6 @@ async def get_notification_count(
     )
 
 
-@router.get(
-    "/{notification_id}",
-    response_model=NotificationResponse,
-    operation_id="get_notification",
-    summary="Get a specific notification",
-)
-async def get_notification(
-    notification_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get a specific notification"""
-    notification = db.query(Notification).filter(
-        Notification.id == notification_id,
-        Notification.user_id == current_user.id
-    ).first()
-
-    if not notification:
-        raise HTTPException(status_code=404, detail="Notification not found")
-
-    return NotificationResponse(**notification.to_dict())
-
-
-@router.post(
-    "/{notification_id}/read",
-    response_model=ActionResult,
-    operation_id="mark_notification_read",
-    summary="Mark a notification as read",
-)
-async def mark_notification_read(
-    notification_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Mark a notification as read"""
-    service = get_notification_service(db)
-    success = service.mark_as_read(notification_id, current_user.id)
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Notification not found")
-
-    return ActionResult(
-        success=True,
-        message="Notification marked as read",
-        affected_count=1
-    )
-
-
 @router.post(
     "/read-all",
     response_model=ActionResult,
@@ -161,31 +113,6 @@ async def mark_all_notifications_read(
         success=True,
         message=f"Marked {count} notification(s) as read",
         affected_count=count
-    )
-
-
-@router.post(
-    "/{notification_id}/dismiss",
-    response_model=ActionResult,
-    operation_id="dismiss_notification",
-    summary="Dismiss a notification",
-)
-async def dismiss_notification(
-    notification_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Dismiss a notification"""
-    service = get_notification_service(db)
-    success = service.dismiss_notification(notification_id, current_user.id)
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Notification not found")
-
-    return ActionResult(
-        success=True,
-        message="Notification dismissed",
-        affected_count=1
     )
 
 
@@ -491,3 +418,80 @@ async def test_achievement_notification(
         return NotificationResponse(**notification.to_dict())
     else:
         raise HTTPException(status_code=400, detail="Notification blocked by preferences")
+
+
+# ==================== DYNAMIC PATH ROUTES ====================
+# NOTE: These MUST be defined last. FastAPI matches routes top-to-bottom,
+# so /{notification_id} would shadow /reminders, /preferences, etc.
+
+@router.get(
+    "/{notification_id}",
+    response_model=NotificationResponse,
+    operation_id="get_notification",
+    summary="Get a specific notification",
+)
+async def get_notification(
+    notification_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific notification"""
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.id
+    ).first()
+
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    return NotificationResponse(**notification.to_dict())
+
+
+@router.post(
+    "/{notification_id}/read",
+    response_model=ActionResult,
+    operation_id="mark_notification_read",
+    summary="Mark a notification as read",
+)
+async def mark_notification_read(
+    notification_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Mark a notification as read"""
+    service = get_notification_service(db)
+    success = service.mark_as_read(notification_id, current_user.id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    return ActionResult(
+        success=True,
+        message="Notification marked as read",
+        affected_count=1
+    )
+
+
+@router.post(
+    "/{notification_id}/dismiss",
+    response_model=ActionResult,
+    operation_id="dismiss_notification",
+    summary="Dismiss a notification",
+)
+async def dismiss_notification(
+    notification_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Dismiss a notification"""
+    service = get_notification_service(db)
+    success = service.dismiss_notification(notification_id, current_user.id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    return ActionResult(
+        success=True,
+        message="Notification dismissed",
+        affected_count=1
+    )

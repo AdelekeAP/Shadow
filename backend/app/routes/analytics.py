@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case, and_
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import math
 import statistics as pystats
@@ -326,7 +326,7 @@ async def get_effectiveness_over_time(
     This data powers the trend line charts on the Effectiveness Analytics dashboard.
     """
     user_id = current_user.id
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     # Get study plans created over time
     plans_over_time = db.query(
@@ -1058,7 +1058,10 @@ async def get_cost_analysis(
     )
 
     if first_message_date:
-        days_active = max((datetime.utcnow() - first_message_date).days, 1)
+        # Ensure timezone-aware comparison (SQLite returns naive datetimes)
+        if first_message_date.tzinfo is None:
+            first_message_date = first_message_date.replace(tzinfo=timezone.utc)
+        days_active = max((datetime.now(timezone.utc) - first_message_date).days, 1)
     else:
         days_active = 1
 
@@ -1122,7 +1125,7 @@ async def get_usage_summary(
     - **average_response_time_ms** -- Mean response time across all requests in the period.
     """
     user_id = current_user.id
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     base_query = db.query(UsageLog).filter(
         UsageLog.user_id == user_id,
