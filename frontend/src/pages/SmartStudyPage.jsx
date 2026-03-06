@@ -13,6 +13,7 @@ import QuizForm from '../components/quiz/QuizForm'
 import QuizPlayer from '../components/quiz/QuizPlayer'
 import QuizResults from '../components/quiz/QuizResults'
 import GeneratingOverlay from '../components/GeneratingOverlay'
+import DiagramGenerator from '../components/studyplan/DiagramGenerator'
 
 /* ─── SVG Icons ─── */
 const SparkleIcon = ({ className }) => (
@@ -45,6 +46,20 @@ const ClipboardIcon = ({ className }) => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z" />
   </svg>
 )
+const DiagramCardIcon = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    <circle cx="12" cy="12" r="2" fill="currentColor" opacity="0.3" />
+    <circle cx="7" cy="8" r="1.5" fill="currentColor" opacity="0.3" />
+    <circle cx="17" cy="8" r="1.5" fill="currentColor" opacity="0.3" />
+    <circle cx="7" cy="16" r="1.5" fill="currentColor" opacity="0.3" />
+    <circle cx="17" cy="16" r="1.5" fill="currentColor" opacity="0.3" />
+    <line x1="12" y1="12" x2="7" y2="8" strokeWidth="1" opacity="0.4" />
+    <line x1="12" y1="12" x2="17" y2="8" strokeWidth="1" opacity="0.4" />
+    <line x1="12" y1="12" x2="7" y2="16" strokeWidth="1" opacity="0.4" />
+    <line x1="12" y1="12" x2="17" y2="16" strokeWidth="1" opacity="0.4" />
+  </svg>
+)
 
 /* ═══════════════════════════════════════
    SmartStudy Page — AI Learning Hub
@@ -64,6 +79,7 @@ export default function SmartStudyPage() {
   const [showChat, setShowChat] = useState(false)
   const [showInsights, setShowInsights] = useState(false)
   const [showAnalytics, setShowAnalytics] = useState(false)
+  const [showDiagram, setShowDiagram] = useState(false)
   const [playingVideo, setPlayingVideo] = useState(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -194,16 +210,17 @@ export default function SmartStudyPage() {
 
           <div className="flex items-center gap-2">
             <NotificationBell />
-            <div className="hidden md:flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-navy-100 flex items-center justify-center">
+            <button
+              onClick={() => navigate('/profile')}
+              className="hidden md:flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-surface-100 transition-colors group"
+              title="View profile"
+            >
+              <div className="w-7 h-7 rounded-full bg-navy-100 flex items-center justify-center group-hover:bg-navy-200 transition-colors">
                 <span className="text-[11px] font-bold text-navy-800">
                   {(user?.full_name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2)}
                 </span>
               </div>
-              <span className="text-[13px] font-medium text-surface-400">{user?.full_name?.split(' ')[0] || 'User'}</span>
-            </div>
-            <button onClick={() => logout()} className="text-[12px] font-medium text-surface-400 hover:text-red-500 transition-colors hidden md:block">
-              Sign out
+              <span className="text-[13px] font-medium text-surface-400 group-hover:text-navy-800 transition-colors">{user?.full_name?.split(' ')[0] || 'User'}</span>
             </button>
             <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden p-1.5 rounded-lg hover:bg-surface-100">
               <svg className="w-5 h-5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -230,6 +247,9 @@ export default function SmartStudyPage() {
                 >{item.label}</button>
               ))}
               <div className="border-t border-surface-200 pt-2 mt-2">
+                <button onClick={() => { navigate('/profile'); setMenuOpen(false) }} className="block w-full text-left px-3 py-2 rounded-lg text-[14px] font-medium text-surface-400 hover:bg-surface-100">
+                  Profile & Settings
+                </button>
                 <button onClick={() => logout()} className="block w-full text-left px-3 py-2 rounded-lg text-[14px] font-medium text-red-500 hover:bg-red-50">
                   Sign out
                 </button>
@@ -264,7 +284,7 @@ export default function SmartStudyPage() {
           </div>
 
           {/* Quick-launch cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-5 animate-fade-up-1">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 mb-5 animate-fade-up-1">
             {[
               {
                 icon: <SparkleIcon className="w-5 h-5" />,
@@ -283,6 +303,15 @@ export default function SmartStudyPage() {
                 fg: 'text-violet-600',
                 accent: 'bg-violet-500',
                 action: () => { setQuizPlanContext(null); setQuizPhase('form') },
+              },
+              {
+                icon: <DiagramCardIcon className="w-5 h-5" />,
+                title: 'Diagrams',
+                desc: 'Visual concept breakdowns',
+                bg: 'bg-teal-500/[0.06]',
+                fg: 'text-teal-600',
+                accent: 'bg-teal-500',
+                action: () => setShowDiagram(true),
               },
               {
                 icon: <LightbulbIcon className="w-5 h-5" />,
@@ -553,6 +582,7 @@ export default function SmartStudyPage() {
       {showChat && <SmartStudyChat onClose={() => setShowChat(false)} />}
       {showInsights && <SmartRecommendations onClose={() => setShowInsights(false)} user={user} />}
       {showAnalytics && <EffectivenessAnalytics onClose={() => setShowAnalytics(false)} />}
+      {showDiagram && <DiagramGenerator onClose={() => setShowDiagram(false)} />}
 
       {/* ── Quiz Modal Flow ── */}
       {quizPhase && (

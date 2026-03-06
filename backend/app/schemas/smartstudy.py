@@ -65,12 +65,12 @@ class StudyPlanCreate(BaseModel):
     """Schema for creating a study plan"""
     course_id: Optional[UUID] = None
     topic: str = Field(..., min_length=1, max_length=255)
-    trigger_type: Optional[str] = Field(None, description="reactive, proactive, preventive, exploratory")
+    trigger_type: Optional[str] = Field(None, max_length=50, description="reactive, proactive, preventive, exploratory")
     trigger_task_id: Optional[UUID] = None
     trigger_score: Optional[float] = None
     duration_days: Optional[int] = Field(None, ge=1, le=30)
-    difficulty_level: Optional[str] = Field("auto", description="beginner, intermediate, advanced, or auto")
-    learning_style: Optional[str] = Field(None, description="visual, audio, reading, kinesthetic, or auto")
+    difficulty_level: Optional[str] = Field("auto", max_length=50, description="beginner, intermediate, advanced, or auto")
+    learning_style: Optional[str] = Field(None, max_length=50, description="visual, audio, reading, kinesthetic, or auto")
 
 
 class StudyPlanResourceResponse(BaseModel):
@@ -299,3 +299,48 @@ class QuizSubmission(BaseModel):
     answers: List[QuizAnswer] = Field(..., min_length=1, max_length=50)
     time_taken_seconds: Optional[int] = Field(None, ge=0)
     timed_out: bool = False
+
+
+# ============================================================================
+# Concept Diagram Schemas
+# ============================================================================
+
+class DiagramNode(BaseModel):
+    """A single node in a concept diagram"""
+    id: str
+    label: str = Field(..., max_length=60)
+    detail: str = Field(..., max_length=500)
+    type: str = Field("concept", pattern=r"^(concept|process|example|category|outcome)$")
+    level: int = Field(0, ge=0, le=5)
+
+
+class DiagramEdge(BaseModel):
+    """An edge connecting two nodes"""
+    from_node: str = Field(..., alias="from")
+    to_node: str = Field(..., alias="to")
+    label: Optional[str] = Field(None, max_length=40)
+    style: str = Field("solid", pattern=r"^(solid|dashed|bold)$")
+
+    class Config:
+        populate_by_name = True
+
+
+class DiagramCreate(BaseModel):
+    """Request schema for generating a concept diagram"""
+    topic: str = Field(..., min_length=1, max_length=255)
+    course_code: Optional[str] = Field(None, max_length=20)
+    diagram_type: str = Field("auto", pattern=r"^(auto|tree|flow|timeline|cycle|mindmap)$")
+    context_hint: Optional[str] = Field(None, max_length=500)
+
+
+class DiagramResponse(BaseModel):
+    """Response schema for a generated concept diagram"""
+    title: str
+    diagram_type: str
+    summary: str
+    nodes: List[DiagramNode]
+    edges: List[DiagramEdge]
+    cached: bool = False
+
+    class Config:
+        populate_by_name = True
