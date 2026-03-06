@@ -11,6 +11,7 @@ from app.routes.smartstudy.context import router as context_router
 from app.routes.smartstudy.study_plans import router as study_plans_router
 from app.routes.smartstudy.video_notes import router as video_notes_router
 from app.routes.smartstudy.quizzes import router as quizzes_router
+from app.routes.smartstudy.diagrams import router as diagrams_router
 
 router = APIRouter(prefix="/api/v1/smartstudy", tags=["SmartStudy"])
 
@@ -19,6 +20,7 @@ router.include_router(context_router)
 router.include_router(study_plans_router)
 router.include_router(video_notes_router)
 router.include_router(quizzes_router)
+router.include_router(diagrams_router)
 
 
 @router.get("/audio/{filename}", operation_id="serve_audio_file", summary="Serve cached audio MP3")

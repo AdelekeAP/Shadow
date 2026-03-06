@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { linkifyText, getActivityIcon, getDifficultyColor } from './studyPlanHelpers.jsx'
 import ResourceCard from './ResourceCard'
 import AudioPlayer from './AudioPlayer'
+import ConceptDiagram from './ConceptDiagram'
+import { generateConceptDiagram } from '../../services/api'
 
 /* ─── SVG Icons ─── */
 const TargetIcon = ({ className }) => (
@@ -41,6 +43,27 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
   const [savingDay, setSavingDay] = useState(null)
   const [justCompleted, setJustCompleted] = useState(null)
   const [confirmUnmark, setConfirmUnmark] = useState(null)
+  const [dayDiagrams, setDayDiagrams] = useState({})
+  const [loadingDiagram, setLoadingDiagram] = useState(null)
+
+  const isVisualPlan = planData.learning_style_used === 'visual'
+
+  const handleLoadDiagram = async (dayNumber, topic) => {
+    if (dayDiagrams[dayNumber]) {
+      // Toggle off if already shown
+      setDayDiagrams(prev => { const next = { ...prev }; delete next[dayNumber]; return next })
+      return
+    }
+    setLoadingDiagram(dayNumber)
+    try {
+      const result = await generateConceptDiagram({ topic })
+      setDayDiagrams(prev => ({ ...prev, [dayNumber]: result }))
+    } catch (err) {
+      console.error('Failed to generate diagram for day', dayNumber, err)
+    } finally {
+      setLoadingDiagram(null)
+    }
+  }
 
   const improvement = (plan.before_score != null && plan.after_score != null)
     ? plan.after_score - plan.before_score
@@ -277,8 +300,37 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
                     )}
                     {savingDay === day.day_number ? 'Saving...' : isCompleted ? 'Completed' : 'Mark Done'}
                   </button>
+
+                  {isVisualPlan && (
+                    <button
+                      onClick={() => handleLoadDiagram(day.day_number, day.focus || day.title)}
+                      disabled={loadingDiagram === day.day_number}
+                      className={`ml-2 flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold transition-all border ${
+                        dayDiagrams[day.day_number]
+                          ? 'bg-teal-50 text-teal-700 border-teal-200'
+                          : 'bg-white text-teal-600 border-teal-200/60 hover:bg-teal-50'
+                      } disabled:opacity-60`}
+                    >
+                      {loadingDiagram === day.day_number ? (
+                        <div className="w-3.5 h-3.5 border-2 border-teal-300 border-t-teal-600 rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      )}
+                      {dayDiagrams[day.day_number] ? 'Hide Diagram' : 'View Diagram'}
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {/* Inline Concept Diagram */}
+              {dayDiagrams[day.day_number] && (
+                <div className="mx-5 mt-3">
+                  <ConceptDiagram diagram={dayDiagrams[day.day_number]} compact />
+                </div>
+              )}
 
               {/* Unmark confirmation */}
               {confirmUnmark === day.day_number && (

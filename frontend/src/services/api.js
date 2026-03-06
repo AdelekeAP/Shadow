@@ -29,16 +29,85 @@ api.interceptors.request.use(
   }
 )
 
-// Response interceptor - handle errors
+// Track whether a token refresh is in progress to prevent concurrent refreshes
+let isRefreshing = false
+let failedQueue = []
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (error) {
+      reject(error)
+    } else {
+      resolve(token)
+    }
+  })
+  failedQueue = []
+}
+
+// Response interceptor - handle 401 with token refresh
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Unauthorized - clear token and redirect to login
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+  async (error) => {
+    const originalRequest = error.config
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      const refreshToken = localStorage.getItem('refresh_token')
+
+      if (!refreshToken) {
+        // No refresh token — clear and redirect
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('refresh_token')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        return Promise.reject(error)
+      }
+
+      if (isRefreshing) {
+        // Queue this request until refresh completes
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject })
+        }).then((token) => {
+          originalRequest.headers.Authorization = `Bearer ${token}`
+          return api(originalRequest)
+        })
+      }
+
+      originalRequest._retry = true
+      isRefreshing = true
+
+      try {
+        const response = await axios.post(`${API_BASE_URL}/api/v1/auth/refresh`, {
+          refresh_token: refreshToken,
+        })
+
+        const newAccessToken = response.data.access_token
+        localStorage.setItem('access_token', newAccessToken)
+        // Store rotated refresh token
+        if (response.data.refresh_token) {
+          localStorage.setItem('refresh_token', response.data.refresh_token)
+        }
+        if (response.data.user) {
+          localStorage.setItem('user', JSON.stringify(response.data.user))
+        }
+
+        processQueue(null, newAccessToken)
+
+        // Retry the original request with new token
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`
+        return api(originalRequest)
+      } catch (refreshError) {
+        processQueue(refreshError, null)
+        // Refresh failed — clear all tokens and redirect
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('refresh_token')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        return Promise.reject(refreshError)
+      } finally {
+        isRefreshing = false
+      }
     }
+
     return Promise.reject(error)
   }
 )
@@ -56,10 +125,13 @@ export const register = async (userData) => {
   try {
     const response = await api.post('/api/v1/auth/register', userData)
 
-    // Save token and user to localStorage
+    // Save tokens and user to localStorage
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token)
       localStorage.setItem('user', JSON.stringify(response.data.user))
+      if (response.data.refresh_token) {
+        localStorage.setItem('refresh_token', response.data.refresh_token)
+      }
     }
 
     return response.data
@@ -77,10 +149,13 @@ export const login = async (credentials) => {
   try {
     const response = await api.post('/api/v1/auth/login', credentials)
 
-    // Save token and user to localStorage
+    // Save tokens and user to localStorage
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token)
       localStorage.setItem('user', JSON.stringify(response.data.user))
+      if (response.data.refresh_token) {
+        localStorage.setItem('refresh_token', response.data.refresh_token)
+      }
     }
 
     return response.data
@@ -93,8 +168,14 @@ export const login = async (credentials) => {
  * Logout user - invalidates token on backend then clears local state
  */
 export const logout = async () => {
-  try { await api.post('/api/v1/auth/logout') } catch { /* best-effort */ }
+  const refreshToken = localStorage.getItem('refresh_token')
+  try {
+    await api.post('/api/v1/auth/logout', {
+      refresh_token: refreshToken || null,
+    })
+  } catch { /* best-effort */ }
   localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
   localStorage.removeItem('user')
   window.location.href = '/login'
 }
@@ -114,6 +195,53 @@ export const getCurrentUser = () => {
  */
 export const isAuthenticated = () => {
   return !!localStorage.getItem('access_token')
+}
+
+/**
+ * Request a password reset email
+ * @param {string} email - Account email
+ * @returns {Promise} Success message
+ */
+export const forgotPassword = async (email) => {
+  const response = await api.post('/api/v1/auth/forgot-password', { email })
+  return response.data
+}
+
+/**
+ * Reset password using token from email
+ * @param {string} token - Reset token
+ * @param {string} newPassword - New password
+ * @returns {Promise} Success message
+ */
+export const resetPassword = async (token, newPassword) => {
+  const response = await api.post('/api/v1/auth/reset-password', {
+    token,
+    new_password: newPassword,
+  })
+  return response.data
+}
+
+/**
+ * Change password (authenticated)
+ * @param {string} oldPassword - Current password
+ * @param {string} newPassword - New password
+ * @returns {Promise} Success message
+ */
+export const changePassword = async (oldPassword, newPassword) => {
+  const response = await api.post('/api/v1/auth/change-password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  })
+  return response.data
+}
+
+/**
+ * Resend email verification link
+ * @returns {Promise} Success message
+ */
+export const resendVerification = async () => {
+  const response = await api.post('/api/v1/auth/resend-verification')
+  return response.data
 }
 
 /**
@@ -1056,6 +1184,20 @@ export const createStudyPlanFromQuizGaps = async (quizId) => {
   } catch (error) {
     throw error.response?.data || error
   }
+}
+
+// ============================================
+// SmartStudy - Concept Diagrams API
+// ============================================
+
+export const generateConceptDiagram = async ({ topic, courseCode, diagramType, contextHint }) => {
+  const response = await api.post('/api/v1/smartstudy/diagrams/', {
+    topic,
+    course_code: courseCode || null,
+    diagram_type: diagramType || 'auto',
+    context_hint: contextHint || null,
+  })
+  return response.data
 }
 
 // ============================================
