@@ -88,6 +88,9 @@ services:
     build: ./frontend
     ports:
       - "3000:80"
+      # - "443:443"  # Uncomment for direct TLS termination
+    # volumes:
+    #   - ./certs:/etc/nginx/ssl:ro  # Mount TLS certificates (fullchain.pem + privkey.pem)
     depends_on:
       backend:
         condition: service_healthy
@@ -108,5 +111,21 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  backup:
+    image: postgres:15-alpine
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:?}@postgres:5432/shadow_db
+      - BACKUP_DIR=/backups
+      - RETENTION_DAYS=7
+    volumes:
+      - ./backend/scripts/backup-db.sh:/backup-db.sh:ro
+      - db-backups:/backups
+    entrypoint: ["/bin/sh", "-c", "chmod +x /backup-db.sh && echo '0 2 * * * /backup-db.sh >> /var/log/backup.log 2>&1' | crontab - && crond -f"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  db-backups:
