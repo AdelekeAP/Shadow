@@ -1,12 +1,17 @@
 """
 Course Routes - Course Management and Enrollment
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+import os
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from typing import List
 from uuid import UUID
 
 from app.database import get_db
+
+logger = logging.getLogger(__name__)
 from app.models.course import Course, UserCourse, Semester
 from app.models.user import User
 from app.schemas.course import (
@@ -16,25 +21,13 @@ from app.schemas.course import (
     UserCourseUpdate,
     UserCourseResponse
 )
+from sqlalchemy.exc import IntegrityError
 from app.utils.auth import get_current_user
 from app.utils.pau_grading import PAUGradingSystem
-from app.services.cache_service import cache_delete_pattern
+from app.services.cache_service import cache_get, cache_set, cache_delete, cache_delete_pattern
+from app.utils.input_sanitizer import sanitize_text
 
 router = APIRouter()
-
-
-async def get_user_from_token(
-    authorization: str = Header(...),
-    db: Session = Depends(get_db)
-) -> User:
-    """Extract and validate user from Authorization header"""
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication scheme"
-        )
-    token = authorization.replace("Bearer ", "")
-    return await get_current_user(token, db)
 
 
 @router.get(
@@ -45,6 +38,7 @@ async def get_user_from_token(
 )
 async def get_all_courses(
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     level: str = None,
     status_filter: str = None,
     department: str = None
@@ -119,7 +113,8 @@ async def get_course(course_id: str, db: Session = Depends(get_db)):
 )
 async def create_course(
     course_data: CourseCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Create a new course (Admin or User)
@@ -134,6 +129,18 @@ async def create_course(
     Raises:
         HTTPException: If course code already exists
     """
+    # Only admins can create courses in the catalog
+    admin_emails = set(
+        e.strip().lower()
+        for e in os.getenv("ADMIN_EMAILS", "").split(",")
+        if e.strip()
+    )
+    if current_user.email.lower() not in admin_emails:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can create courses"
+        )
+
     # Check if course code already exists
     existing_course = db.query(Course).filter(Course.code == course_data.code).first()
     if existing_course:
@@ -142,21 +149,35 @@ async def create_course(
             detail=f"Course with code '{course_data.code}' already exists"
         )
 
+    # Sanitize text fields to prevent XSS
+    sanitized_title = sanitize_text(course_data.title)
+    sanitized_description = sanitize_text(course_data.description) if course_data.description else None
+
+    # Sanitize course code
+    sanitized_code = sanitize_text(course_data.code)
+
     # Create new course
     new_course = Course(
-        code=course_data.code,
-        title=course_data.title,
+        code=sanitized_code,
+        title=sanitized_title,
         credits=course_data.credits,
         level=course_data.level,
         status=course_data.status,
         department=course_data.department,
-        description=course_data.description,
-        created_by="user",  # TODO: Get from authenticated user
+        description=sanitized_description,
+        created_by=str(current_user.id),
         is_approved=True  # Auto-approve for now
     )
 
     db.add(new_course)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(new_course)
 
     return CourseResponse(**new_course.to_dict())
@@ -172,7 +193,7 @@ async def create_course(
 async def enroll_in_course(
     enrollment_data: UserCourseCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Enroll a user in a course
@@ -244,8 +265,17 @@ async def enroll_in_course(
     )
 
     db.add(new_enrollment)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(new_enrollment)
+
+    cache_delete_pattern(f"courses:enrolled:{current_user.id}:*")
 
     return UserCourseResponse(**new_enrollment.to_dict())
 
@@ -259,7 +289,7 @@ async def enroll_in_course(
 async def get_my_courses(
     db: Session = Depends(get_db),
     active_only: bool = True,
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get all courses the user is enrolled in
@@ -272,6 +302,11 @@ async def get_my_courses(
     Returns:
         List of user's enrolled courses with details
     """
+    cache_key = f"courses:enrolled:{current_user.id}:{active_only}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     # Query user courses with eager-loaded relationships to avoid N+1
     query = db.query(UserCourse).options(
         joinedload(UserCourse.course),
@@ -290,7 +325,9 @@ async def get_my_courses(
             )
 
     enrollments = query.all()
-    return [UserCourseResponse(**enrollment.to_dict()) for enrollment in enrollments]
+    result = [UserCourseResponse(**enrollment.to_dict()).model_dump() for enrollment in enrollments]
+    cache_set(cache_key, result, ttl=300)
+    return result
 
 
 @router.get(
@@ -302,7 +339,7 @@ async def get_my_courses(
 async def get_user_course(
     user_course_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get specific enrollment details
@@ -347,7 +384,7 @@ async def update_user_course(
     user_course_id: str,
     update_data: UserCourseUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update enrollment details (marks, priority, etc.)
@@ -410,12 +447,39 @@ async def update_user_course(
         enrollment.predicted_grade_point = PAUGradingSystem.get_grade_point(enrollment.predicted_score)
         enrollment.predicted_letter_grade = PAUGradingSystem.get_letter_grade(enrollment.predicted_score)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(enrollment)
 
-    # Invalidate CGPA caches when scores change
+    # Invalidate CGPA and course caches when scores change
     if any(v is not None for v in [update_data.ca_score, update_data.participation_score, update_data.exam_score]):
         cache_delete_pattern(f"cgpa:*:{current_user.id}")
+        cache_delete_pattern(f"courses:enrolled:{current_user.id}:*")
+
+        # Send CGPA alert email when exam scores are entered (significant CGPA change)
+        if update_data.exam_score is not None and current_user.target_cgpa:
+            try:
+                from app.utils.cgpa_calculator import CGPACalculator
+                from app.services.email_service import send_cgpa_alert_email
+                cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
+                new_cgpa = cgpa_data['current']['cgpa']
+                classification = cgpa_data['current'].get('classification', 'Unclassified')
+                send_cgpa_alert_email(
+                    to=current_user.email,
+                    name=current_user.full_name or "Student",
+                    current_cgpa=float(new_cgpa),
+                    target_cgpa=float(current_user.target_cgpa),
+                    classification=classification,
+                )
+            except Exception as email_err:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to send CGPA alert email: {email_err}")
 
     return UserCourseResponse(**enrollment.to_dict())
 
@@ -429,7 +493,7 @@ async def update_user_course(
 async def unenroll_from_course(
     user_course_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Unenroll from a course (delete enrollment)
@@ -462,8 +526,16 @@ async def unenroll_from_course(
         )
 
     db.delete(enrollment)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
 
     cache_delete_pattern(f"cgpa:*:{current_user.id}")
+    cache_delete_pattern(f"courses:enrolled:{current_user.id}:*")
 
     return None
