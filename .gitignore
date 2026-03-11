@@ -17,6 +17,9 @@ build/
 .env.local
 .env.*.local
 
+# Frontend env (never commit real credentials)
+frontend/.env
+
 # Node
 node_modules/
 npm-debug.log*
@@ -51,5 +54,21 @@ logs/
 htmlcov/
 .pytest_cache/
 
+# Audio cache (generated MP3 files)
+backend/audio_cache/
+
 # OS
 Thumbs.db
+
+# Security - private keys and credentials
+*.pem
+*.key
+*.cert
+credentials.json
+serviceaccount.json
+
+# Review/report markdown files
+*_REVIEW*.md
+*_REPORT*.md
+*_SUMMARY*.md
+FIX_SUMMARY_QUICK_REFERENCE.md
