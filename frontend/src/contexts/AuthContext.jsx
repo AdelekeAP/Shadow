@@ -28,6 +28,7 @@ export function AuthProvider({ children }) {
           setUser(null)
           localStorage.removeItem('access_token')
           localStorage.removeItem('user')
+          // refresh_token is in an HttpOnly cookie and is not stored in localStorage
         }
       }
       setLoading(false)
@@ -39,6 +40,8 @@ export function AuthProvider({ children }) {
     const data = await apiLogin(credentials)
     setToken(data.access_token)
     setUser(data.user)
+    // The refresh token is now stored exclusively in an HttpOnly cookie set by the
+    // server. Do NOT store it in localStorage.
     return data
   }
 
@@ -46,12 +49,16 @@ export function AuthProvider({ children }) {
     const data = await apiRegister(userData)
     setToken(data.access_token)
     setUser(data.user)
+    // The refresh token is now stored exclusively in an HttpOnly cookie set by the
+    // server. Do NOT store it in localStorage.
     return data
   }
 
   const logout = () => {
     setUser(null)
     setToken(null)
+    // The server will clear the HttpOnly refresh_token cookie on the logout request.
+    // We do not store refresh_token in localStorage, so no removal needed here.
     apiLogout()
   }
 

@@ -2,14 +2,26 @@
 Authentication Routes - Register, Login, Logout, Get Current User
 """
 import asyncio
+import logging
+import os
 from time import perf_counter
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token, UserPreferencesUpdate
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+import hashlib
+import secrets
+from app.schemas.auth import (
+    UserCreate, UserLogin, UserResponse, Token, UserPreferencesUpdate,
+    ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest,
+    RefreshRequest, LogoutRequest,
+)
+from app.services.email_service import send_password_reset_email, send_verification_email
 from app.utils.auth import (
     get_password_hash,
     verify_password,
@@ -20,8 +32,17 @@ from app.utils.auth import (
 )
 from app.utils.token_blacklist import blacklist_token
 from app.middleware.rate_limiter import limiter
+from app.utils.input_sanitizer import sanitize_text
+from app.services.cache_service import cache_get, cache_set, cache_delete
+from app.utils.refresh_token import (
+    create_refresh_token,
+    validate_refresh_token,
+    revoke_refresh_token,
+    revoke_all_user_tokens,
+)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -85,8 +106,8 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
     - `gpa_scale`: Automatically set to 5.0 (PAU standard)
     - `target_cgpa` / `current_cgpa`: Must be between 0.0 and 5.0
     """
-    # Check if user already exists
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
+    # Check if user already exists (case-insensitive)
+    existing_user = db.query(User).filter(func.lower(User.email) == user_data.email.lower()).first()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -96,12 +117,16 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
     # Hash password
     hashed_password = get_password_hash(user_data.password)
 
-    # Create new user
+    # Sanitize text fields to prevent XSS
+    sanitized_name = sanitize_text(user_data.full_name)
+    sanitized_university_id = sanitize_text(user_data.university_id) if user_data.university_id else None
+
+    # Create new user (store email in lowercase for consistency)
     new_user = User(
-        email=user_data.email,
+        email=user_data.email.lower(),
         password_hash=hashed_password,
-        full_name=user_data.full_name,
-        university_id=user_data.university_id,
+        full_name=sanitized_name,
+        university_id=sanitized_university_id,
         entry_level=user_data.entry_level,
         target_cgpa=user_data.target_cgpa,
         gpa_scale=5.0,  # PAU uses 5.0 scale
@@ -110,25 +135,54 @@ async def register(request: Request, user_data: UserCreate, db: Session = Depend
         is_active=True
     )
 
+    # Generate email verification token
+    raw_verification_token = secrets.token_urlsafe(32)
+    new_user.email_verified = False
+    new_user.email_verification_token = hashlib.sha256(raw_verification_token.encode()).hexdigest()
+    new_user.email_verification_expires = datetime.now(timezone.utc) + timedelta(hours=24)
+
     # Save to database
     db.add(new_user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(new_user)
 
-    # Create access token with token version
+    # Send verification email (best-effort, don't block registration)
+    try:
+        send_verification_email(
+            to=new_user.email,
+            token=raw_verification_token,
+            name=sanitized_name,
+        )
+    except Exception as email_err:
+        logger.warning(f"Failed to send verification email to {new_user.email}: {email_err}")
+
+    # Create access token with token version and user agent binding
+    user_agent = request.headers.get("user-agent", "")
     access_token = create_access_token(
         data={
             "sub": new_user.email,
             "user_id": str(new_user.id),
             "token_version": new_user.token_version or 0,
-        }
+        },
+        user_agent=user_agent,
     )
+
+    # Create refresh token
+    refresh_token = create_refresh_token(db, new_user.id, user_agent=user_agent)
 
     # Convert user to response format
     user_response = UserResponse(**new_user.to_dict())
 
     return Token(
         access_token=access_token,
+        refresh_token=refresh_token,
         token_type="bearer",
         user=user_response
     )
@@ -212,7 +266,7 @@ async def login(request: Request, credentials: UserLogin, db: Session = Depends(
     """
     start = perf_counter()
     try:
-        return await _do_login(credentials, db)
+        return await _do_login(credentials, db, request)
     finally:
         # Normalize response time to at least 200ms to prevent timing-based
         # account enumeration (user-not-found vs wrong-password).
@@ -221,10 +275,10 @@ async def login(request: Request, credentials: UserLogin, db: Session = Depends(
             await asyncio.sleep(0.2 - elapsed)
 
 
-async def _do_login(credentials: UserLogin, db: Session) -> Token:
+async def _do_login(credentials: UserLogin, db: Session, request: Request) -> Token:
     """Internal login logic, separated for constant-time wrapper."""
-    # Find user by email
-    user = db.query(User).filter(User.email == credentials.email).first()
+    # Find user by email (case-insensitive)
+    user = db.query(User).filter(func.lower(User.email) == credentials.email.lower()).first()
 
     if not user:
         # Run a dummy hash to keep timing consistent
@@ -235,12 +289,29 @@ async def _do_login(credentials: UserLogin, db: Session) -> Token:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check account lockout
-    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
-        remaining = int((user.locked_until - datetime.now(timezone.utc)).total_seconds() / 60) + 1
+    # Check account lockout (reset counter if lockout has expired)
+    if user.locked_until:
+        if user.locked_until > datetime.now(timezone.utc):
+            remaining = int((user.locked_until - datetime.now(timezone.utc)).total_seconds() / 60) + 1
+            raise HTTPException(
+                status_code=423,
+                detail=f"Account locked. Try again in {remaining} minute(s)."
+            )
+        else:
+            # Lockout expired — reset counter
+            user.failed_login_attempts = 0
+            user.locked_until = None
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise HTTPException(status_code=500, detail="Failed to save changes")
+
+    # Check if user is active (before password verification to avoid unnecessary work)
+    if not user.is_active:
         raise HTTPException(
-            status_code=423,
-            detail=f"Account locked. Try again in {remaining} minute(s)."
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive"
         )
 
     # Verify password
@@ -248,43 +319,60 @@ async def _do_login(credentials: UserLogin, db: Session) -> Token:
         user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
         if user.failed_login_attempts >= 5:
             user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check if user is active
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive"
-        )
-
     # Successful login — reset lockout counters
     user.failed_login_attempts = 0
     user.locked_until = None
     user.last_login = datetime.now(timezone.utc)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
 
-    # Create access token with token version
+    # Create access token with token version and user agent binding
+    user_agent = request.headers.get("user-agent", "")
     access_token = create_access_token(
         data={
             "sub": user.email,
             "user_id": str(user.id),
             "token_version": user.token_version or 0,
-        }
+        },
+        user_agent=user_agent,
     )
+
+    # Create refresh token
+    refresh_token = create_refresh_token(db, user.id, user_agent=user_agent)
 
     # Convert user to response format
     user_response = UserResponse(**user.to_dict())
 
-    return Token(
-        access_token=access_token,
-        token_type="bearer",
-        user=user_response
+    response = JSONResponse(content={
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user_response.model_dump(mode="json"),
+        # Still include refresh_token in body for backwards compatibility
+        "refresh_token": refresh_token,
+    })
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=os.getenv("ENVIRONMENT") == "production",
+        samesite="lax",
+        max_age=30 * 24 * 60 * 60,  # 30 days
+        path="/api/v1/auth",
     )
+    return response
 
 
 @router.post(
@@ -303,18 +391,111 @@ async def _do_login(credentials: UserLogin, db: Session) -> Token:
         },
     },
 )
-async def logout(token: str = Depends(oauth2_scheme)):
+async def logout(
+    body: LogoutRequest = None,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+):
     """
-    Invalidate the current JWT token.
+    Invalidate the current JWT token and revoke the refresh token.
 
-    The token is added to an in-memory blacklist and will be rejected on
-    subsequent requests until it naturally expires.
+    The access token is added to a blacklist and the refresh token (if provided)
+    is revoked in the database.
     """
+    # Blacklist the access token
     payload = decode_access_token(token)
     if payload and "exp" in payload:
         exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
         blacklist_token(token, exp)
-    return {"message": "Logged out successfully"}
+
+    # Revoke the refresh token — prefer cookie, fall back to request body
+    if body and body.refresh_token:
+        revoke_refresh_token(db, body.refresh_token)
+
+    response = JSONResponse(content={"message": "Logged out successfully"})
+    response.delete_cookie(
+        key="refresh_token",
+        path="/api/v1/auth",
+    )
+    return response
+
+
+@router.post(
+    "/refresh",
+    response_model=Token,
+    operation_id="refresh_token",
+    summary="Exchange a refresh token for a new access token",
+)
+@limiter.limit("10/minute")
+async def refresh(
+    request: Request,
+    body: RefreshRequest = None,
+    refresh_token_cookie: str = Cookie(None, alias="refresh_token"),
+    db: Session = Depends(get_db),
+):
+    """Exchange a valid refresh token for a new access token.
+
+    The refresh token is read from the HttpOnly cookie (preferred) or from the
+    request body for backwards compatibility.
+    """
+    # Prefer cookie; fall back to request body for backwards compat
+    raw_token = refresh_token_cookie or (body.refresh_token if body else None)
+    if not raw_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token required",
+        )
+
+    user_agent = request.headers.get("user-agent", "")
+    refresh_row = validate_refresh_token(db, raw_token, user_agent=user_agent)
+
+    if not refresh_row:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    # Load user
+    user = db.query(User).filter(User.id == refresh_row.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+
+    # Create new access token
+    access_token = create_access_token(
+        data={
+            "sub": user.email,
+            "user_id": str(user.id),
+            "token_version": user.token_version or 0,
+        },
+        user_agent=user_agent,
+    )
+
+    # Rotate refresh token: revoke old, issue new
+    revoke_refresh_token(db, raw_token)
+    new_refresh_token = create_refresh_token(db, user.id, user_agent=user_agent)
+
+    user_response = UserResponse(**user.to_dict())
+
+    response = JSONResponse(content={
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user_response.model_dump(mode="json"),
+        # Include rotated refresh token in body for backwards compatibility
+        "refresh_token": new_refresh_token,
+    })
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=os.getenv("ENVIRONMENT") == "production",
+        samesite="lax",
+        max_age=30 * 24 * 60 * 60,  # 30 days
+        path="/api/v1/auth",
+    )
+    return response
 
 
 @router.get(
@@ -346,7 +527,14 @@ async def get_me(request: Request, current_user: User = Depends(get_current_user
     all profile fields including academic information (CGPA, credits, entry level)
     and account metadata.
     """
-    return UserResponse(**current_user.to_dict())
+    cache_key = f"user:profile:{current_user.id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    result = UserResponse(**current_user.to_dict()).model_dump()
+    cache_set(cache_key, result, ttl=300)
+    return result
 
 
 @router.patch(
@@ -394,11 +582,208 @@ async def update_preferences(
     if preferences.target_cgpa is not None:
         current_user.target_cgpa = preferences.target_cgpa
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(current_user)
+
+    # Invalidate profile cache
+    cache_delete(f"user:profile:{current_user.id}")
 
     return {
         "message": "Preferences updated successfully",
         "learning_style": current_user.learning_style,
         "target_cgpa": float(current_user.target_cgpa) if current_user.target_cgpa else None
     }
+
+
+# ============================================
+# Password Reset Endpoints
+# ============================================
+
+@router.post(
+    "/forgot-password",
+    operation_id="forgot_password",
+    summary="Request a password reset email",
+)
+@limiter.limit("3/minute")
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Request a password reset email. Always returns 200 to avoid leaking
+    whether the email exists in the system.
+    """
+    user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
+    if user:
+        # Generate token, store hash + 1hr expiry
+        raw_token = secrets.token_urlsafe(32)
+        user.password_reset_token = hashlib.sha256(raw_token.encode()).hexdigest()
+        user.password_reset_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to save changes")
+        try:
+            send_password_reset_email(to=user.email, token=raw_token, name=user.full_name)
+        except Exception as email_err:
+            logger.warning(f"Failed to send password reset email to {user.email}: {email_err}")
+
+    return {"message": "If that email is registered, a reset link has been sent."}
+
+
+@router.post(
+    "/reset-password",
+    operation_id="reset_password",
+    summary="Reset password using token from email",
+)
+@limiter.limit("5/minute")
+async def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    """Reset the user's password given a valid reset token."""
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    user = db.query(User).filter(
+        User.password_reset_token == token_hash,
+        User.password_reset_expires > datetime.now(timezone.utc),
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    user.password_hash = get_password_hash(body.new_password)
+    user.password_reset_token = None
+    user.password_reset_expires = None
+    user.token_version = (user.token_version or 0) + 1  # Invalidate all sessions
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
+
+    # Revoke all refresh tokens for security
+    revoke_all_user_tokens(db, user.id)
+
+    return {"message": "Password reset successfully. Please log in with your new password."}
+
+
+@router.post(
+    "/change-password",
+    operation_id="change_password",
+    summary="Change password (authenticated)",
+)
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change the authenticated user's password."""
+    if not verify_password(body.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    current_user.password_hash = get_password_hash(body.new_password)
+    current_user.token_version = (current_user.token_version or 0) + 1
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
+
+    # Revoke all refresh tokens for security
+    revoke_all_user_tokens(db, current_user.id)
+
+    return {"message": "Password changed successfully. Please log in again."}
+
+
+# ============================================
+# Email Verification Endpoints
+# ============================================
+
+@router.get(
+    "/verify-email/{token}",
+    operation_id="verify_email",
+    summary="Verify email address via link",
+)
+@limiter.limit("10/minute")
+async def verify_email(
+    request: Request,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """Verify a user's email using the token from the verification email."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    user = db.query(User).filter(
+        User.email_verification_token == token_hash,
+        User.email_verification_expires > datetime.now(timezone.utc),
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token",
+        )
+
+    user.email_verified = True
+    user.email_verification_token = None
+    user.email_verification_expires = None
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
+
+    return {"message": "Email verified successfully."}
+
+
+@router.post(
+    "/resend-verification",
+    operation_id="resend_verification",
+    summary="Resend email verification link",
+)
+@limiter.limit("3/hour")
+async def resend_verification(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Resend the email verification link for the authenticated user."""
+    if current_user.email_verified:
+        return {"message": "Email is already verified."}
+
+    raw_token = secrets.token_urlsafe(32)
+    current_user.email_verification_token = hashlib.sha256(raw_token.encode()).hexdigest()
+    current_user.email_verification_expires = datetime.now(timezone.utc) + timedelta(hours=24)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
+
+    try:
+        send_verification_email(
+            to=current_user.email,
+            token=raw_token,
+            name=current_user.full_name,
+        )
+    except Exception as email_err:
+        logger.warning(f"Failed to send verification email to {current_user.email}: {email_err}")
+
+    return {"message": "Verification email sent."}
