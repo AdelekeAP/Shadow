@@ -9,7 +9,7 @@ import logging
 from uuid import UUID
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, defer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, or_, func, update
 
@@ -458,6 +458,7 @@ def browse_library(
         # their own documents regardless of scan_status or visibility.
         if user_id:
             query = db.query(LibraryDocument).options(
+                defer(LibraryDocument.extracted_text),
                 joinedload(LibraryDocument.course),
                 joinedload(LibraryDocument.uploader)
             ).filter(
@@ -471,6 +472,7 @@ def browse_library(
             )
         else:
             query = db.query(LibraryDocument).options(
+                defer(LibraryDocument.extracted_text),
                 joinedload(LibraryDocument.course),
                 joinedload(LibraryDocument.uploader)
             ).filter(
@@ -494,7 +496,8 @@ def browse_library(
 
         # Search in topic, filename, or extracted text
         if search_query:
-            search_term = f"%{search_query}%"
+            escaped = search_query.replace('%', r'\%').replace('_', r'\_')
+            search_term = f"%{escaped}%"
             query = query.filter(
                 or_(
                     LibraryDocument.topic.ilike(search_term),
@@ -735,7 +738,8 @@ def get_user_contributions(
 
         # Paginated document list
         documents = base_query.options(
-            joinedload(LibraryDocument.course)
+            joinedload(LibraryDocument.course),
+            joinedload(LibraryDocument.uploader)
         ).order_by(
             LibraryDocument.uploaded_at.desc()
         ).limit(limit).offset(offset).all()

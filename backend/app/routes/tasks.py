@@ -1,7 +1,10 @@
 """
 Task Routes - Task Management and Tracking
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+import logging
+from collections import defaultdict
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import List, Optional
@@ -21,25 +24,43 @@ from app.schemas.task import (
     TaskStats,
     CourseTaskSummary
 )
+from sqlalchemy.exc import IntegrityError
 from app.utils.auth import get_current_user
-from app.utils.grading import calculate_predicted_grade
+from app.utils.pau_grading import calculate_predicted_grade
 from app.services.cache_service import cache_delete_pattern
+from app.utils.input_sanitizer import sanitize_text
+from app.middleware.rate_limiter import limiter
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
 
-async def get_user_from_token(
-    authorization: str = Header(...),
-    db: Session = Depends(get_db)
-) -> User:
-    """Extract and validate user from Authorization header"""
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication scheme"
-        )
-    token = authorization.replace("Bearer ", "")
-    return await get_current_user(token, db)
+
+def recalculate_course_scores(user_course, db):
+    """Recalculate CA and EXAM scores for a user course from completed tasks."""
+    from app.models.task import Task
+
+    ca_tasks = db.query(Task).filter(
+        Task.user_course_id == user_course.id,
+        Task.category == "CA",
+        Task.is_completed == True,
+        Task.earned_marks.isnot(None)
+    ).all()
+    user_course.ca_score = sum(float(t.earned_marks) for t in ca_tasks)
+
+    exam_tasks = db.query(Task).filter(
+        Task.user_course_id == user_course.id,
+        Task.category == "EXAM",
+        Task.is_completed == True,
+        Task.earned_marks.isnot(None)
+    ).all()
+    user_course.exam_score = sum(float(t.earned_marks) for t in exam_tasks)
+
+    all_count = db.query(func.count(Task.id)).filter(Task.user_course_id == user_course.id).scalar() or 0
+    completed_count = db.query(func.count(Task.id)).filter(
+        Task.user_course_id == user_course.id, Task.is_completed == True
+    ).scalar() or 0
+    user_course.completion_rate = (completed_count / all_count * 100) if all_count > 0 else 0
 
 
 def update_course_grades(user_course: UserCourse, db: Session):
@@ -97,7 +118,14 @@ def update_course_grades(user_course: UserCourse, db: Session):
         user_course.letter_grade = predicted_letter
         user_course.current_grade_point = predicted_gp
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
 
 
 @router.post(
@@ -107,10 +135,12 @@ def update_course_grades(user_course: UserCourse, db: Session):
     operation_id="create_task",
     summary="Create a new academic task",
 )
+@limiter.limit("60/minute")
 async def create_task(
+    request: Request,
     task_data: TaskCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Create a new task for a course
@@ -159,12 +189,16 @@ async def create_task(
                 detail=f"Total CA cannot exceed 30 marks (5 marks reserved for participation). Current: {existing_ca_total}, Adding: {task_data.weight}"
             )
 
+    # Sanitize text fields to prevent XSS
+    sanitized_title = sanitize_text(task_data.title)
+    sanitized_description = sanitize_text(task_data.description) if task_data.description else None
+
     # Create new task
     new_task = Task(
         user_id=current_user.id,
         user_course_id=user_course_uuid,
-        title=task_data.title,
-        description=task_data.description,
+        title=sanitized_title,
+        description=sanitized_description,
         task_type=task_data.task_type,
         weight=task_data.weight,
         max_marks=task_data.max_marks if task_data.max_marks else task_data.weight,
@@ -183,46 +217,25 @@ async def create_task(
     )
 
     db.add(new_task)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(new_task)
 
     # Update UserCourse scores if task is completed with marks
     if new_task.is_completed and new_task.earned_marks:
-        if new_task.category == "CA":
-            # Update CA score
-            ca_tasks = db.query(Task).filter(
-                Task.user_course_id == user_course_uuid,
-                Task.category == "CA",
-                Task.is_completed == True,
-                Task.earned_marks.isnot(None)
-            ).all()
-            user_course.ca_score = sum(float(t.earned_marks) for t in ca_tasks)
-
-        elif new_task.category == "EXAM":
-            # Update EXAM score
-            exam_tasks = db.query(Task).filter(
-                Task.user_course_id == user_course_uuid,
-                Task.category == "EXAM",
-                Task.is_completed == True,
-                Task.earned_marks.isnot(None)
-            ).all()
-            user_course.exam_score = sum(float(t.earned_marks) for t in exam_tasks)
-
-        # Update completion rate
-        all_tasks = db.query(Task).filter(Task.user_course_id == user_course_uuid).count()
-        completed = db.query(Task).filter(
-            Task.user_course_id == user_course_uuid,
-            Task.is_completed == True
-        ).count()
-        user_course.completion_rate = (completed / all_tasks * 100) if all_tasks > 0 else 0
-
-        # Calculate and update predicted grades
+        recalculate_course_scores(user_course, db)
         update_course_grades(user_course, db)
     else:
         # Even for pending tasks, update predictions (accounts for new pending work)
         update_course_grades(user_course, db)
 
-    # Invalidate CGPA cache — task scores affect GPA calculations
+    # Invalidate CGPA cache - task scores affect GPA calculations
     cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     return TaskResponse(**new_task.to_dict())
@@ -236,7 +249,7 @@ async def create_task(
 )
 async def get_user_tasks(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
     course_id: Optional[str] = None,
     is_completed: Optional[bool] = None,
     category: Optional[str] = None,
@@ -315,7 +328,7 @@ async def get_user_tasks(
 )
 async def get_task_statistics(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get task statistics for the current user
@@ -327,57 +340,61 @@ async def get_task_statistics(
     Returns:
         Task statistics
     """
-    user_filter = Task.user_id == current_user.id
-    now = datetime.now(timezone.utc)
+    try:
+        user_filter = Task.user_id == current_user.id
+        now = datetime.now(timezone.utc)
 
-    # Single query for all counts using conditional aggregation
-    total_tasks = db.query(func.count(Task.id)).filter(user_filter).scalar() or 0
-    completed_tasks = db.query(func.count(Task.id)).filter(
-        user_filter, Task.is_completed == True
-    ).scalar() or 0
-    pending_tasks = total_tasks - completed_tasks
+        # Single query for all counts using conditional aggregation
+        total_tasks = db.query(func.count(Task.id)).filter(user_filter).scalar() or 0
+        completed_tasks = db.query(func.count(Task.id)).filter(
+            user_filter, Task.is_completed == True
+        ).scalar() or 0
+        pending_tasks = total_tasks - completed_tasks
 
-    overdue_tasks = db.query(func.count(Task.id)).filter(
-        user_filter,
-        Task.is_completed == False,
-        Task.due_date.isnot(None),
-        Task.due_date < now
-    ).scalar() or 0
+        overdue_tasks = db.query(func.count(Task.id)).filter(
+            user_filter,
+            Task.is_completed == False,
+            Task.due_date.isnot(None),
+            Task.due_date < now
+        ).scalar() or 0
 
-    # CA aggregates via SQL
-    total_ca_available = db.query(func.sum(Task.weight)).filter(
-        user_filter, Task.category == "CA"
-    ).scalar() or 0
-    total_ca_earned = db.query(func.sum(Task.earned_marks)).filter(
-        user_filter, Task.category == "CA",
-        Task.is_completed == True,
-        Task.earned_marks.isnot(None)
-    ).scalar() or 0
+        # CA aggregates via SQL
+        total_ca_available = db.query(func.sum(Task.weight)).filter(
+            user_filter, Task.category == "CA"
+        ).scalar() or 0
+        total_ca_earned = db.query(func.sum(Task.earned_marks)).filter(
+            user_filter, Task.category == "CA",
+            Task.is_completed == True,
+            Task.earned_marks.isnot(None)
+        ).scalar() or 0
 
-    completion_rate = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0.0
+        completion_rate = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0.0
 
-    # Average score for completed tasks with marks
-    avg_result = db.query(
-        func.avg(Task.earned_marks * 100.0 / Task.max_marks)
-    ).filter(
-        user_filter,
-        Task.is_completed == True,
-        Task.earned_marks.isnot(None),
-        Task.max_marks.isnot(None),
-        Task.max_marks > 0
-    ).scalar()
-    average_score = float(avg_result) if avg_result is not None else None
+        # Average score for completed tasks with marks
+        avg_result = db.query(
+            func.avg(Task.earned_marks * 100.0 / Task.max_marks)
+        ).filter(
+            user_filter,
+            Task.is_completed == True,
+            Task.earned_marks.isnot(None),
+            Task.max_marks.isnot(None),
+            Task.max_marks > 0
+        ).scalar()
+        average_score = float(avg_result) if avg_result is not None else None
 
-    return TaskStats(
-        total_tasks=total_tasks,
-        completed_tasks=completed_tasks,
-        pending_tasks=pending_tasks,
-        overdue_tasks=overdue_tasks,
-        total_ca_available=total_ca_available,
-        total_ca_earned=total_ca_earned,
-        completion_rate=round(completion_rate, 2),
-        average_score=round(average_score, 2) if average_score else None
-    )
+        return TaskStats(
+            total_tasks=total_tasks,
+            completed_tasks=completed_tasks,
+            pending_tasks=pending_tasks,
+            overdue_tasks=overdue_tasks,
+            total_ca_available=total_ca_available,
+            total_ca_earned=total_ca_earned,
+            completion_rate=round(completion_rate, 2),
+            average_score=round(average_score, 2) if average_score else None
+        )
+    except Exception as e:
+        logger.error(f"Error in get_task_statistics: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve task statistics")
 
 
 @router.get(
@@ -388,7 +405,7 @@ async def get_task_statistics(
 )
 async def get_tasks_by_course(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get tasks grouped by course with CA progress
@@ -400,18 +417,28 @@ async def get_tasks_by_course(
     Returns:
         List of course summaries with tasks
     """
-    # Get all user courses
-    user_courses = db.query(UserCourse).filter(
+    # Get all user courses with eager-loaded course data (fixes N+1)
+    user_courses = db.query(UserCourse).options(
+        joinedload(UserCourse.course)
+    ).filter(
         UserCourse.user_id == current_user.id
     ).all()
 
+    # Batch fetch all CA tasks for all courses in ONE query (fixes N+1)
+    uc_ids = [uc.id for uc in user_courses]
+    all_ca_tasks = db.query(Task).filter(
+        Task.user_course_id.in_(uc_ids),
+        Task.category == "CA"
+    ).all()
+
+    # Group tasks by user_course_id
+    tasks_by_course = defaultdict(list)
+    for t in all_ca_tasks:
+        tasks_by_course[t.user_course_id].append(t)
+
     summaries = []
     for uc in user_courses:
-        # Get tasks for this course
-        tasks = db.query(Task).filter(
-            Task.user_course_id == uc.id,
-            Task.category == "CA"
-        ).all()
+        tasks = tasks_by_course.get(uc.id, [])
 
         total_ca = sum(float(t.weight) for t in tasks)
         earned_ca = sum(
@@ -449,7 +476,7 @@ async def get_tasks_by_course(
 async def get_task(
     task_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get a specific task by ID
@@ -490,11 +517,13 @@ async def get_task(
     operation_id="update_task",
     summary="Update a task",
 )
+@limiter.limit("60/minute")
 async def update_task(
+    request: Request,
     task_id: str,
     task_update: TaskUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update a task
@@ -528,7 +557,12 @@ async def update_task(
         )
 
     # Update fields
-    update_data = task_update.dict(exclude_unset=True)
+    update_data = task_update.model_dump(exclude_unset=True)
+    # Sanitize text fields to prevent XSS
+    if 'title' in update_data and update_data['title']:
+        update_data['title'] = sanitize_text(update_data['title'])
+    if 'description' in update_data and update_data['description']:
+        update_data['description'] = sanitize_text(update_data['description'])
     for field, value in update_data.items():
         setattr(task, field, value)
 
@@ -538,7 +572,14 @@ async def update_task(
         target_cgpa=float(current_user.target_cgpa) if current_user.target_cgpa else None
     )
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(task)
 
     # Update UserCourse scores if task is completed
@@ -547,30 +588,10 @@ async def update_task(
             UserCourse.id == task.user_course_id
         ).first()
         if user_course:
-            if task.category == "CA":
-                # Recalculate total CA score
-                ca_tasks = db.query(Task).filter(
-                    Task.user_course_id == user_course.id,
-                    Task.category == "CA",
-                    Task.is_completed == True,
-                    Task.earned_marks.isnot(None)
-                ).all()
-                user_course.ca_score = sum(float(t.earned_marks) for t in ca_tasks)
-
-            elif task.category == "EXAM":
-                # Recalculate total EXAM score
-                exam_tasks = db.query(Task).filter(
-                    Task.user_course_id == user_course.id,
-                    Task.category == "EXAM",
-                    Task.is_completed == True,
-                    Task.earned_marks.isnot(None)
-                ).all()
-                user_course.exam_score = sum(float(t.earned_marks) for t in exam_tasks)
-
-            # Calculate and update predicted grades
+            recalculate_course_scores(user_course, db)
             update_course_grades(user_course, db)
 
-    # Invalidate CGPA cache — task changes affect GPA calculations
+    # Invalidate CGPA cache - task changes affect GPA calculations
     cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     return TaskResponse(**task.to_dict())
@@ -582,11 +603,13 @@ async def update_task(
     operation_id="complete_task",
     summary="Mark a task as complete",
 )
+@limiter.limit("60/minute")
 async def mark_task_complete(
+    request: Request,
     task_id: str,
     completion_data: TaskComplete,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Mark a task as complete. Returns the updated task and, if the score
@@ -643,7 +666,14 @@ async def mark_task_complete(
         if completed_at_aware > due_date_aware:
             task.is_late = True
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(task)
 
     # Update UserCourse scores (with row lock to prevent race conditions)
@@ -652,38 +682,10 @@ async def mark_task_complete(
             UserCourse.id == task.user_course_id
         ).with_for_update().first()
         if user_course:
-            if task.category == "CA":
-                # Atomic CA score recalculation
-                ca_total = db.query(func.sum(Task.earned_marks)).filter(
-                    Task.user_course_id == user_course.id,
-                    Task.category == "CA",
-                    Task.is_completed == True,
-                    Task.earned_marks.isnot(None)
-                ).scalar() or 0
-                user_course.ca_score = float(ca_total)
-
-            elif task.category == "EXAM":
-                # Atomic EXAM score recalculation
-                exam_total = db.query(func.sum(Task.earned_marks)).filter(
-                    Task.user_course_id == user_course.id,
-                    Task.category == "EXAM",
-                    Task.is_completed == True,
-                    Task.earned_marks.isnot(None)
-                ).scalar() or 0
-                user_course.exam_score = float(exam_total)
-
-            # Update completion rate
-            all_count = db.query(func.count(Task.id)).filter(Task.user_course_id == user_course.id).scalar()
-            completed_count = db.query(func.count(Task.id)).filter(
-                Task.user_course_id == user_course.id,
-                Task.is_completed == True
-            ).scalar()
-            user_course.completion_rate = (completed_count / all_count * 100) if all_count > 0 else 0
-
-            # Calculate and update predicted grades
+            recalculate_course_scores(user_course, db)
             update_course_grades(user_course, db)
 
-    # Invalidate CGPA cache — completed task with marks affects GPA
+    # Invalidate CGPA cache - completed task with marks affects GPA
     cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     # Build response
@@ -720,10 +722,12 @@ async def mark_task_complete(
     operation_id="delete_task",
     summary="Delete a task",
 )
+@limiter.limit("60/minute")
 async def delete_task(
+    request: Request,
     task_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Delete a task
@@ -755,10 +759,49 @@ async def delete_task(
             detail="Task not found"
         )
 
-    db.delete(task)
-    db.commit()
+    # Capture the user_course before deleting the task
+    user_course_id = task.user_course_id
 
-    # Invalidate CGPA cache — deleted task affects GPA calculations
+    db.delete(task)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
+
+    # Recalculate UserCourse current_score after deleting a task
+    if user_course_id:
+        user_course = db.query(UserCourse).filter(UserCourse.id == user_course_id).first()
+        if user_course:
+            remaining_tasks = db.query(Task).filter(
+                Task.user_course_id == user_course_id,
+                Task.earned_marks.isnot(None),
+            ).all()
+            scored_tasks = [
+                t for t in remaining_tasks
+                if t.weight and (t.max_marks or t.weight)
+            ]
+            total_weight = sum(float(t.weight) for t in scored_tasks)
+            weighted_score = sum(
+                (float(t.earned_marks) / float(t.max_marks if t.max_marks else t.weight))
+                * float(t.weight)
+                for t in scored_tasks
+            )
+            new_score = (weighted_score / total_weight) * 100 if total_weight > 0 else 0
+            user_course.current_score = min(new_score, 100)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="Resource already exists")
+            except Exception:
+                db.rollback()
+                raise HTTPException(status_code=500, detail="Failed to save changes")
+
+    # Invalidate CGPA cache - deleted task affects GPA calculations
     cache_delete_pattern(f"cgpa:*:{current_user.id}")
 
     return None
