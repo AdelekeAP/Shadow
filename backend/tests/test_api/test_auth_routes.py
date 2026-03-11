@@ -244,14 +244,17 @@ def test_refresh_token_rotation(client):
     if not refresh_token:
         pytest.skip("Refresh tokens not enabled")
 
-    # Use refresh token
+    # Use refresh token via body (cookie is also set by server)
     resp = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert resp.status_code == 200
     assert "access_token" in resp.json()
     new_refresh = resp.json().get("refresh_token")
     assert new_refresh != refresh_token  # Should be a new token
 
-    # Old refresh token should be revoked
+    # Old refresh token should be revoked.
+    # Clear the cookie so the test explicitly uses the old (revoked) token in the
+    # body and is not rescued by the rotated token stored in the HttpOnly cookie.
+    client.cookies.clear()
     resp2 = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert resp2.status_code in [401, 400]
 

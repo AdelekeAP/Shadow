@@ -4,12 +4,14 @@
  */
 import axios from 'axios'
 
-// API base URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// API base URL - empty string means same origin (works in production behind nginx proxy)
+export const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000,
+  withCredentials: true, // Send HttpOnly refresh_token cookie automatically
   headers: {
     'Content-Type': 'application/json'
   }
@@ -51,17 +53,6 @@ api.interceptors.response.use(
     const originalRequest = error.config
 
     if (error.response?.status === 401 && !originalRequest._retry) {
-      const refreshToken = localStorage.getItem('refresh_token')
-
-      if (!refreshToken) {
-        // No refresh token — clear and redirect
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        return Promise.reject(error)
-      }
-
       if (isRefreshing) {
         // Queue this request until refresh completes
         return new Promise((resolve, reject) => {
@@ -76,16 +67,25 @@ api.interceptors.response.use(
       isRefreshing = true
 
       try {
-        const response = await axios.post(`${API_BASE_URL}/api/v1/auth/refresh`, {
-          refresh_token: refreshToken,
-        })
+        // The HttpOnly cookie is sent automatically via withCredentials.
+        // Also include the refresh token from localStorage as a fallback
+        // for backwards compatibility during the migration window.
+        const legacyRefreshToken = localStorage.getItem('refresh_token')
+        const refreshPayload = legacyRefreshToken
+          ? { refresh_token: legacyRefreshToken }
+          : {}
+        const response = await axios.post(
+          `${API_BASE_URL}/api/v1/auth/refresh`,
+          refreshPayload,
+          { withCredentials: true }
+        )
 
         const newAccessToken = response.data.access_token
         localStorage.setItem('access_token', newAccessToken)
-        // Store rotated refresh token
-        if (response.data.refresh_token) {
-          localStorage.setItem('refresh_token', response.data.refresh_token)
-        }
+        // Do NOT store the rotated refresh token in localStorage —
+        // it is now kept exclusively in the HttpOnly cookie set by the server.
+        // Remove any legacy refresh_token that may still be in localStorage.
+        localStorage.removeItem('refresh_token')
         if (response.data.user) {
           localStorage.setItem('user', JSON.stringify(response.data.user))
         }
@@ -97,7 +97,7 @@ api.interceptors.response.use(
         return api(originalRequest)
       } catch (refreshError) {
         processQueue(refreshError, null)
-        // Refresh failed — clear all tokens and redirect
+        // Refresh failed — clear access token and redirect
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
         localStorage.removeItem('user')
@@ -125,13 +125,11 @@ export const register = async (userData) => {
   try {
     const response = await api.post('/api/v1/auth/register', userData)
 
-    // Save tokens and user to localStorage
+    // Save access token and user profile to localStorage.
+    // The refresh token is stored exclusively in the HttpOnly cookie set by the server.
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token)
       localStorage.setItem('user', JSON.stringify(response.data.user))
-      if (response.data.refresh_token) {
-        localStorage.setItem('refresh_token', response.data.refresh_token)
-      }
     }
 
     return response.data
@@ -149,13 +147,11 @@ export const login = async (credentials) => {
   try {
     const response = await api.post('/api/v1/auth/login', credentials)
 
-    // Save tokens and user to localStorage
+    // Save access token and user profile to localStorage.
+    // The refresh token is stored exclusively in the HttpOnly cookie set by the server.
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token)
       localStorage.setItem('user', JSON.stringify(response.data.user))
-      if (response.data.refresh_token) {
-        localStorage.setItem('refresh_token', response.data.refresh_token)
-      }
     }
 
     return response.data
@@ -168,12 +164,16 @@ export const login = async (credentials) => {
  * Logout user - invalidates token on backend then clears local state
  */
 export const logout = async () => {
-  const refreshToken = localStorage.getItem('refresh_token')
+  // Send any legacy refresh token from localStorage as a fallback for backwards
+  // compatibility, but the server will primarily revoke via the HttpOnly cookie.
+  const legacyRefreshToken = localStorage.getItem('refresh_token')
   try {
     await api.post('/api/v1/auth/logout', {
-      refresh_token: refreshToken || null,
+      refresh_token: legacyRefreshToken || null,
     })
   } catch { /* best-effort */ }
+  // The server clears the refresh_token cookie via Set-Cookie on the response.
+  // We only need to clean up localStorage here.
   localStorage.removeItem('access_token')
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('user')
@@ -185,8 +185,13 @@ export const logout = async () => {
  * @returns {Object|null} User object or null
  */
 export const getCurrentUser = () => {
-  const userStr = localStorage.getItem('user')
-  return userStr ? JSON.parse(userStr) : null
+  try {
+    const userStr = localStorage.getItem('user')
+    return userStr ? JSON.parse(userStr) : null
+  } catch {
+    localStorage.removeItem('user')
+    return null
+  }
 }
 
 /**
@@ -203,8 +208,12 @@ export const isAuthenticated = () => {
  * @returns {Promise} Success message
  */
 export const forgotPassword = async (email) => {
-  const response = await api.post('/api/v1/auth/forgot-password', { email })
-  return response.data
+  try {
+    const response = await api.post('/api/v1/auth/forgot-password', { email })
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 /**
@@ -240,8 +249,12 @@ export const changePassword = async (oldPassword, newPassword) => {
  * @returns {Promise} Success message
  */
 export const resendVerification = async () => {
-  const response = await api.post('/api/v1/auth/resend-verification')
-  return response.data
+  try {
+    const response = await api.post('/api/v1/auth/resend-verification')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 /**
@@ -511,7 +524,7 @@ export const deleteTask = async (taskId) => {
 }
 
 // ============================================
-// GPA API (TODO)
+// GPA API
 // ============================================
 
 export const getCurrentCGPA = async () => {
@@ -520,13 +533,21 @@ export const getCurrentCGPA = async () => {
 }
 
 export const exportCGPAcsv = async () => {
-  const response = await api.get('/api/v1/cgpa/export/csv', { responseType: 'blob' })
-  return response
+  try {
+    const response = await api.get('/api/v1/cgpa/export/csv', { responseType: 'blob' })
+    return response
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 export const exportCGPApdf = async () => {
-  const response = await api.get('/api/v1/cgpa/export/pdf', { responseType: 'blob' })
-  return response
+  try {
+    const response = await api.get('/api/v1/cgpa/export/pdf', { responseType: 'blob' })
+    return response
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 // ============================================
@@ -534,30 +555,50 @@ export const exportCGPApdf = async () => {
 // ============================================
 
 export const createAcademicYear = async (academicYear) => {
-  const response = await api.post('/api/v1/semesters/academic-year', { academic_year: academicYear })
-  return response.data
+  try {
+    const response = await api.post('/api/v1/semesters/academic-year', { academic_year: academicYear })
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 export const getSemesters = async () => {
-  const response = await api.get('/api/v1/semesters/')
-  return response.data
+  try {
+    const response = await api.get('/api/v1/semesters/')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 export const getActiveSemester = async () => {
-  const response = await api.get('/api/v1/semesters/active')
-  return response.data
+  try {
+    const response = await api.get('/api/v1/semesters/active')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 export const activateSemester = async (semesterId) => {
-  const response = await api.patch(`/api/v1/semesters/${semesterId}/activate`)
-  return response.data
+  try {
+    const response = await api.patch(`/api/v1/semesters/${semesterId}/activate`)
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 export const assignCoursesToSemester = async (semesterId, userCourseIds) => {
-  const response = await api.post(`/api/v1/semesters/${semesterId}/assign-courses`, {
-    user_course_ids: userCourseIds
-  })
-  return response.data
+  try {
+    const response = await api.post(`/api/v1/semesters/${semesterId}/assign-courses`, {
+      user_course_ids: userCourseIds
+    })
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 // ============================================
@@ -708,7 +749,8 @@ export const generateStudyPlan = async (planData) => {
       const response = await api.post('/api/v1/smartstudy/study-plans/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
-        }
+        },
+        timeout: 120000,
       })
       return response.data
     } else {
@@ -722,7 +764,7 @@ export const generateStudyPlan = async (planData) => {
         trigger_type: planData.triggerType || 'student_request',
         trigger_task_id: planData.triggerTaskId || null,
         trigger_score: planData.triggerScore || null
-      })
+      }, { timeout: 120000 })
       return response.data
     }
   } catch (error) {
@@ -841,12 +883,51 @@ export const reportBrokenResource = async (planId, resourceId, reason = 'broken_
  * Generate an audio summary for a resource
  * @param {string} planId - Study plan UUID
  * @param {string} resourceId - Resource UUID
- * @returns {Promise} Response with audio_url, script, duration_estimate
+ * @param {string} activityDescription - Activity description for targeted audio
+ * @param {string} pageRange - Page range (e.g. "5-9") for slide-specific audio
+ * @returns {Promise} Response with audio_url, script, duration_estimate, page_range
  */
-export const generateAudioSummary = async (planId, resourceId) => {
+export const generateAudioSummary = async (planId, resourceId, activityDescription = '', pageRange = null, isPrimary = true) => {
   try {
     const response = await api.post(
-      `/api/v1/smartstudy/study-plans/${planId}/resources/${resourceId}/audio`
+      `/api/v1/smartstudy/study-plans/${planId}/resources/${resourceId}/audio`,
+      { activity_description: activityDescription, page_range: pageRange, is_primary: isPrimary }
+    )
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+export const generatePracticeExercises = async (planId, resourceId, activityDescription = '', pageRange = null) => {
+  try {
+    const response = await api.post(
+      `/api/v1/smartstudy/study-plans/${planId}/resources/${resourceId}/exercises`,
+      { activity_description: activityDescription, page_range: pageRange }
+    )
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+export const generateStudyCards = async (planId, resourceId, activityDescription = '', pageRange = null) => {
+  try {
+    const response = await api.post(
+      `/api/v1/smartstudy/study-plans/${planId}/resources/${resourceId}/study-cards`,
+      { activity_description: activityDescription, page_range: pageRange }
+    )
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
+export const validateExerciseStep = async (planId, resourceId, data) => {
+  try {
+    const response = await api.post(
+      `/api/v1/smartstudy/study-plans/${planId}/resources/${resourceId}/exercises/validate-step`,
+      data
     )
     return response.data
   } catch (error) {
@@ -1136,6 +1217,19 @@ export const generateQuizFromPlan = async (planId, quizType = 'topic_review', qu
   }
 }
 
+export const generateSectionQuiz = async (planId, pageRange, activityDescription = '', questionCount = 5) => {
+  try {
+    const response = await api.post(`/api/v1/smartstudy/quizzes/from-plan/${planId}/section`, {
+      page_range: pageRange,
+      activity_description: activityDescription,
+      question_count: questionCount,
+    })
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
 export const getQuizzes = async (topic = null) => {
   try {
     const params = topic ? `?topic=${encodeURIComponent(topic)}` : ''
@@ -1191,13 +1285,17 @@ export const createStudyPlanFromQuizGaps = async (quizId) => {
 // ============================================
 
 export const generateConceptDiagram = async ({ topic, courseCode, diagramType, contextHint }) => {
-  const response = await api.post('/api/v1/smartstudy/diagrams/', {
-    topic,
-    course_code: courseCode || null,
-    diagram_type: diagramType || 'auto',
-    context_hint: contextHint || null,
-  })
-  return response.data
+  try {
+    const response = await api.post('/api/v1/smartstudy/diagrams/', {
+      topic,
+      course_code: courseCode || null,
+      diagram_type: diagramType || 'auto',
+      context_hint: contextHint || null,
+    })
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 // ============================================
@@ -1483,8 +1581,12 @@ export const getStatisticalAnalysis = async () => {
  * @returns {Promise} Cost analysis with token usage, estimated costs, and projections
  */
 export const getCostAnalysis = async () => {
-  const response = await api.get('/api/v1/analytics/cost-analysis')
-  return response.data
+  try {
+    const response = await api.get('/api/v1/analytics/cost-analysis')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || error
+  }
 }
 
 export default api
