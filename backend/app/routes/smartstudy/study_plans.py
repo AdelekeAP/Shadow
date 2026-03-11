@@ -321,6 +321,18 @@ async def create_study_plan_with_upload(
                     with open(temp_file_path, "rb") as f:
                         file_content_bytes = f.read()
 
+                # Virus scan the uploaded file before processing
+                try:
+                    from app.services.virus_scan_service import scan_bytes
+                    scan_result = scan_bytes(file_content_bytes)
+                    if scan_result and scan_result.get("status") == "infected":
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="File failed security scan and cannot be processed"
+                        )
+                except ImportError:
+                    pass  # ClamAV not available, skip scan
+
             except HTTPException:
                 # Clean up temp file on size-limit error
                 if temp_file_path:
@@ -1433,6 +1445,18 @@ async def upload_to_library(
             chunks.append(chunk)
         file_content = b"".join(chunks)
         file_size = total_size
+
+        # Virus scan the uploaded file before processing
+        try:
+            from app.services.virus_scan_service import scan_bytes
+            scan_result = scan_bytes(file_content)
+            if scan_result and scan_result.get("status") == "infected":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="File failed security scan and cannot be processed"
+                )
+        except ImportError:
+            pass  # ClamAV not available, skip scan
 
         # Verify course exists
         course = db.query(Course).filter(Course.id == course_id).first()

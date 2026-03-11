@@ -4,8 +4,6 @@ Handles GPT-4 chat, context loading, and personalized study plan generation
 """
 import asyncio
 import logging
-import threading
-import time
 from typing import Optional, Dict, List, Any, Generator
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
@@ -23,21 +21,15 @@ from app.services.openai_client import (
     OpenAIErrorType,
     CHAT_MODELS,
 )
+from app.services.cache_service import cache_get, cache_set, cache_delete
 
 logger = logging.getLogger(__name__)
-
-# --- Student context cache (thread-safe, bounded) ---
-_context_cache: Dict[str, tuple] = {}
-_context_cache_lock = threading.Lock()
-_CONTEXT_CACHE_TTL = 120  # seconds
-_CONTEXT_CACHE_MAX_SIZE = 200
 
 
 def invalidate_student_context_cache(user_id: int):
     """Remove cached student context for a specific user."""
-    cache_key = f"student_context_{user_id}"
-    with _context_cache_lock:
-        _context_cache.pop(cache_key, None)
+    cache_key = f"student_context:{user_id}"
+    cache_delete(cache_key)
 
 
 def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
@@ -51,14 +43,10 @@ def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
     Returns:
         Dict with student info, courses, tasks, moods, CGPA status
     """
-    # Check TTL cache first (thread-safe)
-    cache_key = f"student_context_{user_id}"
-    now = time.time()
-    with _context_cache_lock:
-        if cache_key in _context_cache:
-            cached_value, cached_time = _context_cache[cache_key]
-            if now - cached_time < _CONTEXT_CACHE_TTL:
-                return cached_value
+    cache_key = f"student_context:{user_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
 
     try:
         # Get user
@@ -140,13 +128,7 @@ def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
             )
         }
 
-        # Store in TTL cache (thread-safe with LRU eviction)
-        with _context_cache_lock:
-            if len(_context_cache) >= _CONTEXT_CACHE_MAX_SIZE and cache_key not in _context_cache:
-                # Evict oldest entry
-                oldest_key = next(iter(_context_cache))
-                del _context_cache[oldest_key]
-            _context_cache[cache_key] = (context, time.time())
+        cache_set(cache_key, context, ttl=120)  # 2 min TTL
 
         return context
 
