@@ -3,7 +3,7 @@ CGPA Export Service - Generate CSV and PDF exports of CGPA data
 """
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 from fpdf import FPDF
 from app.utils.pau_grading import get_classification, get_letter_grade, get_grade_point
 
@@ -90,7 +90,7 @@ def generate_pdf(cgpa_data: dict, student_name: str) -> bytes:
 
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 116, 139)  # surface-400
-    pdf.cell(0, 5, f"Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 5, f"Generated on {datetime.now(timezone.utc).strftime('%B %d, %Y at %I:%M %p')}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
 
     # ── Student Info ──
