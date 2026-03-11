@@ -2,7 +2,7 @@
 Shadow - Main FastAPI Application
 Goal-Driven Academic Achievement System for PAU
 """
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -34,6 +34,26 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle - startup and shutdown events"""
     # Startup
     logger.info("Starting Shadow API...")
+
+    # === Environment validation ===
+    _env = os.getenv("ENVIRONMENT", "development")
+    _db_url = os.getenv("DATABASE_URL", "")
+
+    if _env == "production":
+        if not os.getenv("SECRET_KEY"):
+            raise RuntimeError("SECRET_KEY must be set in production")
+        if not _db_url or _db_url == "postgresql://localhost:5432/shadow_db":
+            raise RuntimeError("DATABASE_URL must be explicitly set in production")
+
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.warning("OPENAI_API_KEY not set — SmartStudy AI features will be unavailable")
+
+    # Log optional service status
+    for svc, var in [("Redis", "REDIS_URL"), ("ClamAV", "CLAMAV_HOST"), ("SMTP", "SMTP_HOST"), ("Sentry", "SENTRY_DSN")]:
+        if os.getenv(var):
+            logger.info(f"  {svc}: configured")
+        else:
+            logger.info(f"  {svc}: not configured")
 
     # Start notification scheduler
     try:
@@ -120,9 +140,14 @@ tags_metadata = [
     },
 ]
 
+# Disable OpenAPI docs in production
+_is_production = os.getenv("ENVIRONMENT") == "production"
+
 # Create FastAPI app
 app = FastAPI(
     title="Shadow API",
+    docs_url=None if _is_production else "/api/docs",
+    redoc_url=None if _is_production else "/api/redoc",
     description="""
 ## Shadow -- Goal-Driven Academic Achievement System
 
@@ -169,16 +194,17 @@ Tokens are returned upon successful registration or login.
 | Endpoint Group | Limit | Window |
 |----------------|-------|--------|
 | Authentication (`/auth/login`, `/auth/register`) | 5 requests | per minute |
-| Mood logging (`/mood/log-mood`) | 10 requests | per minute |
-| Library voting (`/library/.../vote`) | 30 requests | per minute |
-| SmartStudy chat (`/smartstudy/chat`) | 20 requests | per minute |
+| SmartStudy chat | 15 requests | per minute |
+| Quiz creation | 10 requests | per minute |
+| Audio generation | 6/min, 40/hr, 100/day | multi-window |
+| Exercises & Study cards | 10/min, 60/hr | multi-window |
+| Exercise validation | 20/min, 120/hr | multi-window |
+| Library voting | 30 requests | per minute |
 | All other endpoints | 60 requests | per minute |
 
-Rate limits are enforced per client IP address. Exceeding the limit returns `HTTP 429 Too Many Requests`.
+Rate limits are enforced **per authenticated user** (via JWT). Unauthenticated endpoints fall back to IP-based limiting. Exceeding the limit returns `HTTP 429 Too Many Requests`.
 """,
     version="2.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
     openapi_tags=tags_metadata,
     contact={
         "name": "Adeleke Paul Aladenusi",
@@ -221,13 +247,16 @@ app.add_middleware(
     max_age=3600
 )
 
+# Request correlation ID middleware (outermost — runs first, wraps everything)
+from app.middleware.logging_middleware import RequestCorrelationMiddleware, RequestIDFilter
+app.add_middleware(RequestCorrelationMiddleware)
+
+# Attach RequestIDFilter to root logger so all log records include request_id
+logging.getLogger().addFilter(RequestIDFilter())
+
 # Security headers middleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
-
-# Request logging middleware
-from app.middleware.logging_middleware import RequestLoggingMiddleware
-app.add_middleware(RequestLoggingMiddleware)
 
 # Rate limiting
 from app.middleware.rate_limiter import limiter, rate_limit_exceeded_handler
@@ -235,6 +264,29 @@ from slowapi.errors import RateLimitExceeded
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
+# Global exception handler — prevents stack traces from leaking to clients
+from starlette.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    errors = []
+    for e in exc.errors():
+        loc = " -> ".join(str(l) for l in e["loc"] if l != "body")
+        errors.append(f"{loc}: {e['msg']}" if loc else e["msg"])
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "; ".join(errors)}
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    logger.exception("Unhandled error", extra={"path": request.url.path})
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# Auth dependency for protected endpoints
+from app.utils.auth import get_current_user
 
 # Root endpoint
 @app.get(
@@ -274,7 +326,6 @@ async def health_check():
     """
     return {
         "status": "healthy",
-        "environment": os.getenv("ENVIRONMENT", "production")
     }
 
 
@@ -284,12 +335,13 @@ async def health_check():
     tags=["Health"],
     response_description="Returns health status of all service dependencies.",
 )
-async def detailed_health_check():
+async def detailed_health_check(current_user = Depends(get_current_user)):
     """
     Detailed health check that verifies connectivity to all external
     dependencies: PostgreSQL, Redis, and ClamAV.
 
-    Returns per-service status so operations teams can identify degraded states.
+    Requires authentication. Returns per-service status so operations teams
+    can identify degraded states.
     """
     checks = {}
 
@@ -301,8 +353,8 @@ async def detailed_health_check():
         db.execute(text("SELECT 1"))
         db.close()
         checks["database"] = {"status": "healthy"}
-    except Exception as e:
-        checks["database"] = {"status": "unhealthy", "error": str(type(e).__name__)}
+    except Exception:
+        checks["database"] = {"status": "unhealthy"}
 
     # Redis check
     try:
@@ -313,19 +365,19 @@ async def detailed_health_check():
             checks["redis"] = {"status": "healthy"}
         else:
             checks["redis"] = {"status": "unavailable", "note": "Caching disabled"}
-    except Exception as e:
-        checks["redis"] = {"status": "unhealthy", "error": str(type(e).__name__)}
+    except Exception:
+        checks["redis"] = {"status": "unhealthy"}
 
     # ClamAV check
     try:
         from app.services.virus_scan_service import get_scanner_status
         scanner = get_scanner_status()
         if scanner["available"]:
-            checks["clamav"] = {"status": "healthy", "version": scanner["version"]}
+            checks["clamav"] = {"status": "healthy"}
         else:
             checks["clamav"] = {"status": "unavailable", "note": "Files quarantined as pending"}
-    except Exception as e:
-        checks["clamav"] = {"status": "unhealthy", "error": str(type(e).__name__)}
+    except Exception:
+        checks["clamav"] = {"status": "unhealthy"}
 
     overall = "healthy" if all(
         c.get("status") == "healthy" for c in checks.values()
@@ -333,13 +385,13 @@ async def detailed_health_check():
 
     return {
         "status": overall,
-        "environment": os.getenv("ENVIRONMENT", "production"),
         "services": checks
     }
 
 
 # Import and include routers
 from app.routes import auth, courses, tasks, cgpa, recommendations, mood, smartstudy, library, content_curation, notifications, analytics, semesters
+from app.routes import admin
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(courses.router, prefix="/api/v1/courses", tags=["Courses"])
@@ -353,6 +405,7 @@ app.include_router(library.router, prefix="/api/v1", tags=["Library"])
 app.include_router(content_curation.router, tags=["Content Curation"])
 app.include_router(notifications.router, prefix="/api/v1", tags=["Notifications"])
 app.include_router(analytics.router, prefix="/api/v1", tags=["Analytics"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 
 
 if __name__ == "__main__":

@@ -3,7 +3,9 @@ SmartStudy Chat Endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List
 from uuid import UUID
 
@@ -22,6 +24,8 @@ from app.services.smartstudy_service import (
     chat_with_smartstudy,
     stream_chat_with_smartstudy,
 )
+from app.utils.input_sanitizer import sanitize_text
+from app.utils.ai_guard import require_ai_feature
 
 import logging
 
@@ -36,12 +40,13 @@ router = APIRouter()
     operation_id="send_chat_message",
     summary="Send a message to SmartStudy AI and get a response",
 )
-@limiter.limit("10/minute")
+@limiter.limit("15/minute")
 async def create_chat_message(
     request: Request,
     message_data: ChatMessageCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _ai_check=Depends(require_ai_feature("ai_chat")),
 ):
     """
     Send a message to SmartStudy AI and get a response
@@ -50,20 +55,17 @@ async def create_chat_message(
     - **conversation_id**: Optional - continue existing conversation
     """
     try:
-        result = chat_with_smartstudy(
+        result = await chat_with_smartstudy(
             db=db,
             user_id=str(current_user.id),
-            message=message_data.content,
+            message=sanitize_text(message_data.content),
             conversation_id=str(message_data.conversation_id) if message_data.conversation_id else None
         )
 
         if "error" in result:
-            detail = {"message": result["error"]}
-            if "error_type" in result:
-                detail["error_type"] = result["error_type"]
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=detail
+                detail=result.get("error", "AI service temporarily unavailable")
             )
 
         return result
@@ -71,10 +73,10 @@ async def create_chat_message(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in create_chat_message: {e}")
+        logger.error(f"Error in create_chat_message: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"message": str(e), "error_type": "unknown"}
+            detail={"message": "Failed to process chat message", "error_type": "unknown"}
         )
 
 
@@ -83,12 +85,13 @@ async def create_chat_message(
     operation_id="stream_chat_message",
     summary="Send a message and receive SSE-streamed response",
 )
-@limiter.limit("10/minute")
+@limiter.limit("15/minute")
 async def stream_chat_message(
     request: Request,
     message_data: ChatMessageCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _ai_check=Depends(require_ai_feature("ai_chat")),
 ):
     """
     Send a message to SmartStudy AI and receive a streaming SSE response.
@@ -98,7 +101,7 @@ async def stream_chat_message(
     generator = stream_chat_with_smartstudy(
         db=db,
         user_id=str(current_user.id),
-        message=message_data.content,
+        message=sanitize_text(message_data.content),
         conversation_id=str(message_data.conversation_id) if message_data.conversation_id else None,
     )
 
@@ -130,16 +133,22 @@ async def get_user_conversations(
     - **limit**: Number of conversations to return (default 20)
     """
     try:
-        conversations = db.query(ChatConversation).filter(
-            ChatConversation.user_id == current_user.id
-        ).order_by(ChatConversation.updated_at.desc()).limit(limit).all()
+        # Get conversations with message counts in a single query (fixes N+1)
+        conversations_with_counts = (
+            db.query(
+                ChatConversation,
+                func.count(ChatMessage.id).label('message_count')
+            )
+            .outerjoin(ChatMessage, ChatMessage.conversation_id == ChatConversation.id)
+            .filter(ChatConversation.user_id == current_user.id)
+            .group_by(ChatConversation.id)
+            .order_by(ChatConversation.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
 
         result = []
-        for conv in conversations:
-            message_count = db.query(ChatMessage).filter(
-                ChatMessage.conversation_id == conv.id
-            ).count()
-
+        for conv, message_count in conversations_with_counts:
             result.append(ChatConversationList(
                 id=conv.id,
                 title=conv.title,
@@ -151,10 +160,10 @@ async def get_user_conversations(
         return result
 
     except Exception as e:
-        logger.error(f"Error in get_user_conversations: {e}")
+        logger.error(f"Error in get_user_conversations: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to fetch conversations"
         )
 
 
@@ -195,16 +204,16 @@ async def get_conversation(
             title=conversation.title,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
-            messages=[ChatMessageResponse.from_orm(msg) for msg in messages]
+            messages=[ChatMessageResponse.model_validate(msg) for msg in messages]
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in get_conversation: {e}")
+        logger.error(f"Error in get_conversation: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to fetch conversation"
         )
 
 
@@ -234,16 +243,20 @@ async def delete_conversation(
             )
 
         db.delete(conversation)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Cannot delete this conversation because it has dependent records")
 
         return {"message": "Conversation deleted successfully"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in delete_conversation: {e}")
+        logger.error(f"Error in delete_conversation: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to delete conversation"
         )

@@ -55,18 +55,22 @@ async def get_all_courses(
     Returns:
         List of courses
     """
-    query = db.query(Course).filter(Course.is_approved == True)
+    try:
+        query = db.query(Course).filter(Course.is_approved == True)
 
-    # Apply filters
-    if level:
-        query = query.filter(Course.level == level)
-    if status_filter:
-        query = query.filter(Course.status == status_filter)
-    if department:
-        query = query.filter(Course.department == department)
+        # Apply filters
+        if level:
+            query = query.filter(Course.level == level)
+        if status_filter:
+            query = query.filter(Course.status == status_filter)
+        if department:
+            query = query.filter(Course.department == department)
 
-    courses = query.order_by(Course.code).all()
-    return [CourseResponse(**course.to_dict()) for course in courses]
+        courses = query.order_by(Course.code).all()
+        return [CourseResponse(**course.to_dict()) for course in courses]
+    except Exception as e:
+        logger.error(f"Error in get_all_courses: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve courses")
 
 
 @router.get(
@@ -302,32 +306,36 @@ async def get_my_courses(
     Returns:
         List of user's enrolled courses with details
     """
-    cache_key = f"courses:enrolled:{current_user.id}:{active_only}"
-    cached = cache_get(cache_key)
-    if cached is not None:
-        return cached
+    try:
+        cache_key = f"courses:enrolled:{current_user.id}:{active_only}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
 
-    # Query user courses with eager-loaded relationships to avoid N+1
-    query = db.query(UserCourse).options(
-        joinedload(UserCourse.course),
-        joinedload(UserCourse.semester)
-    ).filter(UserCourse.user_id == current_user.id)
+        # Query user courses with eager-loaded relationships to avoid N+1
+        query = db.query(UserCourse).options(
+            joinedload(UserCourse.course),
+            joinedload(UserCourse.semester)
+        ).filter(UserCourse.user_id == current_user.id)
 
-    # Filter by active semester if requested
-    if active_only:
-        active_sem = db.query(Semester).filter(
-            Semester.user_id == current_user.id,
-            Semester.is_active == True
-        ).first()
-        if active_sem:
-            query = query.filter(
-                (UserCourse.semester_id == active_sem.id) | (UserCourse.semester_id.is_(None))
-            )
+        # Filter by active semester if requested
+        if active_only:
+            active_sem = db.query(Semester).filter(
+                Semester.user_id == current_user.id,
+                Semester.is_active == True
+            ).first()
+            if active_sem:
+                query = query.filter(
+                    (UserCourse.semester_id == active_sem.id) | (UserCourse.semester_id.is_(None))
+                )
 
-    enrollments = query.all()
-    result = [UserCourseResponse(**enrollment.to_dict()).model_dump() for enrollment in enrollments]
-    cache_set(cache_key, result, ttl=300)
-    return result
+        enrollments = query.all()
+        result = [UserCourseResponse(**enrollment.to_dict()).model_dump() for enrollment in enrollments]
+        cache_set(cache_key, result, ttl=300)
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_my_courses: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve enrolled courses")
 
 
 @router.get(
