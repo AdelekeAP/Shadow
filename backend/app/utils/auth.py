@@ -4,7 +4,8 @@ JWT token generation/validation and password hashing
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError
 from passlib.context import CryptContext
 import os
 from dotenv import load_dotenv
@@ -19,12 +20,10 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     import warnings
-    warnings.warn(
-        "SECRET_KEY not set — using insecure default. Set SECRET_KEY in .env for production.",
-        stacklevel=2,
-    )
-    SECRET_KEY = "dev-only-insecure-key-change-in-production"
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
+    warnings.warn("SECRET_KEY not set — using random key (sessions won't persist across restarts)")
+    import secrets
+    SECRET_KEY = secrets.token_urlsafe(32)
+ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 # Password hashing context
@@ -65,17 +64,20 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, user_agent: Optional[str] = None) -> str:
     """
     Create a JWT access token
 
     Args:
         data: Dictionary containing user data to encode
         expires_delta: Optional custom expiration time
+        user_agent: Optional User-Agent string to bind token to
 
     Returns:
         Encoded JWT token
     """
+    import hashlib
+
     to_encode = data.copy()
 
     if expires_delta:
@@ -84,6 +86,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     to_encode.update({"exp": expire})
+
+    # Bind token to user agent if provided
+    if user_agent:
+        to_encode["ua"] = hashlib.sha256(user_agent.encode()).hexdigest()[:16]
+
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
     return encoded_jwt
@@ -102,7 +109,7 @@ def decode_access_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError:
+    except PyJWTError:
         return None
 
 
@@ -129,7 +136,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request = None,
 ):
     """
     Dependency to get current authenticated user
@@ -161,6 +169,12 @@ async def get_current_user(
     if is_blacklisted(token):
         raise credentials_exception
 
+    # Validate user-agent claim if present and request is available
+    if request is not None:
+        request_ua = getattr(request, 'headers', {}).get("user-agent", "") if hasattr(request, 'headers') else ""
+        if request_ua and not validate_user_agent_claim(payload, request_ua):
+            raise credentials_exception
+
     email: str = payload.get("sub")
     user_id: str = payload.get("user_id")
 
@@ -191,3 +205,13 @@ async def get_current_user(
         )
 
     return user
+
+
+def validate_user_agent_claim(payload: dict, request_user_agent: str) -> bool:
+    """Validate the user-agent claim in a JWT token, if present."""
+    import hashlib
+    ua_claim = payload.get("ua")
+    if not ua_claim or not request_user_agent:
+        return True  # No UA binding or no request UA — skip validation
+    expected = hashlib.sha256(request_user_agent.encode()).hexdigest()[:16]
+    return ua_claim == expected
