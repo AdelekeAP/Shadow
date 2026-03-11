@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCurrentUser, isAuthenticated, logout, getEnrolledCourses, getTasks, getTaskStats, updateEnrollment } from '../services/api'
+import { getEnrolledCourses, getTasks, getTaskStats, updateEnrollment, resendVerification } from '../services/api'
+import { useAuth } from '../contexts/AuthContext'
 import TaskList from '../components/TaskList'
 import AddTaskModal from '../components/AddTaskModal'
 import PriorityRecommendationsCompact from '../components/PriorityRecommendationsCompact'
@@ -105,7 +106,7 @@ function CGPARing({ current, target, max = 5.0 }) {
    ═══════════════════════════════════════════════ */
 function DashboardPage() {
   const navigate = useNavigate()
-  const [user, setUser] = useState(null)
+  const { user, logout } = useAuth()
   const [enrolledCourses, setEnrolledCourses] = useState([])
   const [tasks, setTasks] = useState([])
   const [taskStats, setTaskStats] = useState(null)
@@ -120,12 +121,13 @@ function DashboardPage() {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
 
   const [loadError, setLoadError] = useState(null)
+  const [verifyDismissed, setVerifyDismissed] = useState(false)
+  const [resending, setResending] = useState(false)
+  const [verifyFeedback, setVerifyFeedback] = useState(null)
 
   useEffect(() => {
-    if (!isAuthenticated()) { navigate('/login'); return }
-    setUser(getCurrentUser())
     loadAll()
-  }, [navigate])
+  }, [])
 
   const loadAll = async () => {
     setLoading(true)
@@ -268,19 +270,17 @@ function DashboardPage() {
 
             <div className="w-px h-5 bg-surface-200 hidden sm:block" />
             <NotificationBell />
-            <div className="hidden md:flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-navy-100 flex items-center justify-center">
+            <button
+              onClick={() => navigate('/profile')}
+              className="hidden md:flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-surface-100 transition-colors group"
+              title="View profile"
+            >
+              <div className="w-7 h-7 rounded-full bg-navy-100 flex items-center justify-center group-hover:bg-navy-200 transition-colors">
                 <span className="text-[11px] font-bold text-navy-800">
                   {(user?.full_name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2)}
                 </span>
               </div>
-              <span className="text-[13px] font-medium text-surface-400">{user?.full_name?.split(' ')[0] || 'User'}</span>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="text-[12px] font-medium text-surface-400 hover:text-red-500 transition-colors hidden md:block"
-            >
-              Sign out
+              <span className="text-[13px] font-medium text-surface-400 group-hover:text-navy-800 transition-colors">{user?.full_name?.split(' ')[0] || 'User'}</span>
             </button>
 
             {/* Mobile burger */}
@@ -332,6 +332,9 @@ function DashboardPage() {
               </div>
               <div className="border-t border-surface-200 pt-2 mt-2">
                 <p className="px-3 py-1 text-[12px] text-surface-400">{user?.full_name}</p>
+                <button onClick={() => { navigate('/profile'); setMenuOpen(false) }} className="block w-full text-left px-3 py-2 rounded-lg text-[14px] font-medium text-surface-400 hover:bg-surface-100">
+                  Profile & Settings
+                </button>
                 <button onClick={handleLogout} className="block w-full text-left px-3 py-2 rounded-lg text-[14px] font-medium text-red-500 hover:bg-red-50">
                   Sign out
                 </button>
@@ -343,6 +346,65 @@ function DashboardPage() {
 
       {/* ══════════ MAIN ══════════ */}
       <main className="mx-auto max-w-[1360px] px-5 py-6">
+
+        {/* Email verification — branded, non-blocking */}
+        {user && user.email_verified === false && !verifyDismissed && (
+          <div className="mb-5 rounded-2xl border border-navy-200/40 overflow-hidden animate-fade-up" role="alert" style={{ background: 'linear-gradient(135deg, #f0f4ff 0%, #f8f9fb 50%, #fff9eb 100%)' }}>
+            <div className="flex items-start gap-4 p-4 sm:p-5">
+              {/* Icon container */}
+              <div className="w-10 h-10 rounded-xl bg-navy-800/[0.07] flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg className="w-5 h-5 text-navy-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                </svg>
+              </div>
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <h4 className="text-[14px] font-semibold text-navy-900 mb-0.5">Verify your email</h4>
+                <p className="text-[12px] text-surface-400 leading-relaxed mb-3">
+                  Confirm your email address to secure your Shadow account and enable password recovery.
+                </p>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={async () => {
+                      setResending(true)
+                      setVerifyFeedback(null)
+                      try { await resendVerification(); setVerifyFeedback({ type: 'success', text: 'Verification email sent! Check your inbox.' }) }
+                      catch { setVerifyFeedback({ type: 'error', text: 'Could not send. Try again later.' }) }
+                      finally { setResending(false) }
+                    }}
+                    disabled={resending}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-navy-800 text-white text-[12px] font-semibold hover:bg-navy-900 transition-all disabled:opacity-50 shadow-sm"
+                  >
+                    {resending ? (
+                      <>
+                        <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                        </svg>
+                        Send verification email
+                      </>
+                    )}
+                  </button>
+                  {verifyFeedback && (
+                    <span aria-live="polite" className={`text-[11px] font-medium ${verifyFeedback.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {verifyFeedback.text}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {/* Dismiss */}
+              <button onClick={() => setVerifyDismissed(true)} className="text-surface-300 hover:text-surface-400 transition-colors flex-shrink-0 p-1 rounded-lg hover:bg-surface-100" aria-label="Dismiss verification banner">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Error banner */}
         {loadError && (

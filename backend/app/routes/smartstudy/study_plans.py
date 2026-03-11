@@ -3,11 +3,16 @@ SmartStudy Study Plan Endpoints (Phase 2)
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from uuid import UUID
+from pydantic import BaseModel
+import asyncio
+import json
 import os
+import re
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.utils.auth import get_current_user
@@ -31,15 +36,97 @@ from app.services.study_plan_generator import (
 from app.services.document_processor import (
     process_document_for_study_plan,
     validate_file,
+    analyze_content_type,
 )
 from app.services.library_service import contribute_to_library
 from app.services.cache_service import cache_delete_pattern
+from app.utils.ai_guard import require_ai_feature
 
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class AudioRequest(BaseModel):
+    activity_description: str = ""
+    page_range: str = None
+    is_primary: bool = True  # True = first audio of the day (ElevenLabs), False = secondary (OpenAI nova)
+
+
+class ExerciseRequest(BaseModel):
+    activity_description: str = ""
+    page_range: str = None
+
+
+class StudyCardsRequest(BaseModel):
+    activity_description: str = ""
+    page_range: str = None
+
+
+def extract_relevant_slides(full_content: str, activity_desc: str, page_range: str = None) -> str:
+    """Extract relevant page/slide range from slide content based on activity description.
+
+    If page_range is provided (e.g., "5-9"), use it directly.
+    If activity description mentions specific page/slide numbers (e.g., "slides 13-18"),
+    extract only those sections. Otherwise return first chunk of content.
+    """
+    if not full_content:
+        return ""
+
+    start_num = None
+    end_num = None
+
+    # Priority 1: Explicit page_range from plan data (e.g., "5-9", "12")
+    if page_range:
+        pr_match = re.match(r'(\d+)\s*[-–to]*\s*(\d*)', str(page_range).strip())
+        if pr_match:
+            start_num = int(pr_match.group(1))
+            end_num = int(pr_match.group(2)) if pr_match.group(2) else start_num
+
+    # Priority 2: Parse from activity description text
+    if start_num is None and activity_desc:
+        range_pattern = r'(?:slide|page|slides|pages)\s*(\d+)\s*[-–to]+\s*(\d+)'
+        single_pattern = r'(?:slide|page)\s*(\d+)'
+        range_match = re.search(range_pattern, activity_desc, re.IGNORECASE)
+        single_match = re.search(single_pattern, activity_desc, re.IGNORECASE)
+
+        if range_match:
+            start_num = int(range_match.group(1))
+            end_num = int(range_match.group(2))
+        elif single_match:
+            start_num = int(single_match.group(1))
+            end_num = start_num
+
+    # No page range found anywhere — return first chunk
+    if start_num is None:
+        return full_content[:6000]
+
+    # Extract content between the page/slide markers
+    # Content uses "--- Page N ---" for PDFs and "--- Slide N ---" for PPTX
+    marker_pattern = r'--- (?:Page|Slide) (\d+) ---'
+    sections = re.split(marker_pattern, full_content)
+
+    # sections alternates: [before_first_marker, num1, content1, num2, content2, ...]
+    extracted = []
+    for i in range(1, len(sections), 2):
+        try:
+            page_num = int(sections[i])
+            if start_num <= page_num <= end_num and i + 1 < len(sections):
+                extracted.append(f"--- Page/Slide {page_num} ---\n{sections[i + 1].strip()}")
+        except (ValueError, IndexError):
+            continue
+
+    if extracted:
+        result = "\n\n".join(extracted)
+        # If extracted section is very short, supplement with surrounding context
+        if len(result) < 500 and len(full_content) > len(result):
+            return result + "\n\n[Additional context from slides]\n" + full_content[:3000]
+        return result[:8000]
+
+    # Fallback: page markers not found, return beginning of content
+    return full_content[:6000]
 
 
 @router.post(
@@ -53,6 +140,7 @@ async def create_study_plan(
     request: Request,
     plan_data: StudyPlanCreate,
     current_user: User = Depends(get_current_user),
+    _ai_check=Depends(require_ai_feature("ai_study_plans")),
     db: Session = Depends(get_db)
 ):
     """
@@ -64,7 +152,7 @@ async def create_study_plan(
     - **trigger_type**: reactive, proactive, preventive, or exploratory
     """
     try:
-        result = generate_study_plan(
+        result = await generate_study_plan(
             db=db,
             user_id=str(current_user.id),
             topic=plan_data.topic,
@@ -88,10 +176,10 @@ async def create_study_plan(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in create_study_plan: {e}")
+        logger.error(f"Error in create_study_plan: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to generate study plan"
         )
 
 
@@ -113,6 +201,7 @@ async def create_study_plan_with_upload(
     trigger_type: str = Form("student_request"),
     is_school_material: bool = Form(False),
     week_number: int = Form(None),
+    _ai_check=Depends(require_ai_feature("ai_study_plans")),
     library_document_id: str = Form(None),  # NEW: Use existing library document
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -158,7 +247,7 @@ async def create_study_plan_with_upload(
                     detail="Invalid library_document_id format"
                 )
 
-            logger.info(f"📚 Using library document: {library_document_id}")
+            logger.info(f"Using library document: {library_document_id}")
 
             # Fetch library document
             from app.models.library import LibraryDocument
@@ -189,19 +278,19 @@ async def create_study_plan_with_upload(
             }
 
             # Use library document's course if not specified
-            if not course_id:
+            if not course_id and library_doc.course_id:
                 course_id = str(library_doc.course_id)
 
             # Use topic from library if not provided
             if not topic:
                 topic = extracted_topic
 
-            logger.info(f"✅ Loaded library document: {library_doc.file_name}")
+            logger.info(f"Loaded library document: {library_doc.file_name}")
             logger.info(f"   Using {len(slide_content)} characters of content")
 
         # Process uploaded file if provided
         if uploaded_file:
-            logger.info(f"📄 Processing uploaded file: {uploaded_file.filename}")
+            logger.info(f"Processing uploaded file: {uploaded_file.filename}")
 
             # Validate file type
             file_ext = uploaded_file.filename.lower().split('.')[-1]
@@ -211,19 +300,42 @@ async def create_study_plan_with_upload(
                     detail=f"Unsupported file type: .{file_ext}. Only PDF and PPTX are supported."
                 )
 
-            # Save file temporarily
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
-                # Read and write file content
-                content = await uploaded_file.read()
-                file_content_bytes = content  # Store for library contribution
-                temp_file.write(content)
-                temp_file_path = temp_file.name
+            # Save file temporarily — stream directly to disk to avoid doubling memory
+            MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+            temp_file_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
+                    temp_file_path = temp_file.name
+                    file_size = 0
+                    while chunk := await uploaded_file.read(8192):
+                        file_size += len(chunk)
+                        if file_size > MAX_UPLOAD_SIZE:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"File too large ({file_size // (1024*1024)}MB). Maximum size is 10MB."
+                            )
+                        temp_file.write(chunk)
+
+                # Read back for library contribution only if needed
+                if uploaded_file:
+                    with open(temp_file_path, "rb") as f:
+                        file_content_bytes = f.read()
+
+            except HTTPException:
+                # Clean up temp file on size-limit error
+                if temp_file_path:
+                    try:
+                        os.unlink(temp_file_path)
+                    except OSError:
+                        pass
+                raise
 
             try:
-                # Process document
-                result = process_document_for_study_plan(
-                    file_path=temp_file_path,
-                    topic_hint=topic  # Use provided topic as hint
+                # Process document (offload to thread — contains blocking time.sleep in retry logic)
+                result = await asyncio.to_thread(
+                    process_document_for_study_plan,
+                    temp_file_path,
+                    topic,  # topic_hint
                 )
 
                 if not result["success"]:
@@ -236,8 +348,14 @@ async def create_study_plan_with_upload(
                 extracted_topic = result["main_topic"]
                 file_info = result.get("file_info")
 
-                logger.info(f"✅ Extracted {len(slide_content)} characters from {uploaded_file.filename}")
-                logger.info(f"   Detected topic: {extracted_topic}")
+                if not slide_content or not slide_content.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Could not extract text from the uploaded file. The file may be image-based or empty."
+                    )
+
+                logger.info(f"Extracted {len(slide_content)} characters from {uploaded_file.filename}")
+                logger.info(f"Detected topic: {extracted_topic}")
 
                 # Use extracted topic if no topic provided
                 if not topic:
@@ -260,7 +378,7 @@ async def create_study_plan_with_upload(
             doc_view_url = f"/api/v1/library/documents/{str(library_doc.id)}/view"
 
         # Generate study plan
-        plan_result = generate_study_plan(
+        plan_result = await generate_study_plan(
             db=db,
             user_id=str(current_user.id),
             topic=topic,
@@ -284,7 +402,7 @@ async def create_study_plan_with_upload(
         # Public if marked as school material, private otherwise.
         library_result = None
         if uploaded_file and course_id:
-            logger.info(f"📚 Saving document to library (public={is_school_material})...")
+            logger.info(f"Saving document to library (public={is_school_material})...")
 
             library_result = contribute_to_library(
                 db=db,
@@ -302,7 +420,7 @@ async def create_study_plan_with_upload(
 
             if library_result.get("success"):
                 lib_doc_id = library_result.get('library_document_id')
-                logger.info(f"✅ Document added to library: {lib_doc_id}")
+                logger.info(f"Document added to library: {lib_doc_id}")
                 cache_delete_pattern("library:browse:*")
                 cache_delete_pattern("library:stats*")
                 cache_delete_pattern(f"library:contributions:{current_user.id}")
@@ -316,11 +434,51 @@ async def create_study_plan_with_upload(
                         StudyPlanResource.resource_type == "uploaded_slides",
                         StudyPlanResource.resource_url.is_(None),
                     ).update({"resource_url": view_url}, synchronize_session="fetch")
-                    db.commit()
-                    logger.info(f"📎 Backfilled uploaded_slides resources with library URL: {view_url}")
+                    try:
+                        db.commit()
+                    except IntegrityError:
+                        db.rollback()
+                        raise HTTPException(status_code=409, detail="Resource already exists")
+                    logger.info(f"Backfilled uploaded_slides resources with library URL: {view_url}")
 
             elif library_result.get("is_duplicate"):
-                logger.info(f"📋 Document already exists in library (duplicate detected)")
+                logger.info("Document already exists in library (duplicate detected)")
+                # Still backfill the resource URL using the existing document
+                existing_id = library_result.get("existing_document_id")
+                if existing_id and plan_result.get("study_plan_id"):
+                    from app.models.smartstudy import StudyPlanResource
+                    view_url = f"/api/v1/library/documents/{existing_id}/view"
+                    db.query(StudyPlanResource).filter(
+                        StudyPlanResource.study_plan_id == plan_result["study_plan_id"],
+                        StudyPlanResource.resource_type == "uploaded_slides",
+                        StudyPlanResource.resource_url.is_(None),
+                    ).update({"resource_url": view_url}, synchronize_session="fetch")
+                    try:
+                        db.commit()
+                    except IntegrityError:
+                        db.rollback()
+                        raise HTTPException(status_code=409, detail="Resource already exists")
+                    logger.info(f"Backfilled uploaded_slides with existing library doc: {view_url}")
+
+        # Run content analysis for smart style recommendation
+        style_recommendation = None
+        if slide_content and learning_style:
+            try:
+                content_analysis = analyze_content_type(slide_content)
+                warning = content_analysis["style_warnings"].get(learning_style)
+                if warning:
+                    style_recommendation = {
+                        "content_type": content_analysis["content_type"],
+                        "selected_style": learning_style,
+                        "recommended_styles": content_analysis["recommended_styles"],
+                        "warning": warning,
+                    }
+                    logger.info(
+                        f"Style mismatch detected: {learning_style} for "
+                        f"{content_analysis['content_type']} content"
+                    )
+            except Exception as analysis_err:
+                logger.warning(f"Content analysis failed (non-fatal): {analysis_err}")
 
         # Add file info to response
         return {
@@ -328,16 +486,17 @@ async def create_study_plan_with_upload(
             "document_processed": uploaded_file is not None,
             "extracted_topic": extracted_topic,
             "file_info": file_info,
-            "library_contribution": library_result if library_result else None
+            "library_contribution": library_result if library_result else None,
+            "style_recommendation": style_recommendation,
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in create_study_plan_with_upload: {e}")
+        logger.error(f"Error in create_study_plan_with_upload: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to generate study plan"
         )
 
 
@@ -362,34 +521,33 @@ async def get_user_study_plans(
     - **offset**: Number of plans to skip (default 0)
     """
     try:
+        from sqlalchemy.orm import selectinload
+
         query = db.query(StudyPlan).filter(StudyPlan.user_id == current_user.id)
 
         if active_only:
             query = query.filter(StudyPlan.is_active == True)
 
-        plans = query.order_by(StudyPlan.created_at.desc()).limit(limit).offset(offset).all()
+        # Use eager loading to avoid N+1 queries
+        plans = query.options(selectinload(StudyPlan.resources)).order_by(StudyPlan.created_at.desc()).limit(limit).offset(offset).all()
 
-        # Enrich with resources
+        # Enrich with resources (already loaded via eager loading)
         result = []
         for plan in plans:
-            resources = db.query(StudyPlanResource).filter(
-                StudyPlanResource.study_plan_id == plan.id
-            ).order_by(
-                StudyPlanResource.day_number,
-                StudyPlanResource.order_in_day
-            ).all()
+            # Sort resources in memory (already loaded)
+            resources = sorted(plan.resources, key=lambda r: (r.day_number, r.order_in_day))
 
-            plan_dict = plan.to_dict()
+            plan_dict = plan.to_summary_dict()
             plan_dict["resources"] = [r.to_dict() for r in resources]
             result.append(plan_dict)
 
         return result
 
     except Exception as e:
-        logger.error(f"Error in get_user_study_plans: {e}")
+        logger.error(f"Error in get_user_study_plans: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to fetch study plans"
         )
 
 
@@ -421,10 +579,10 @@ async def get_single_study_plan(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in get_single_study_plan: {e}")
+        logger.error(f"Error in get_single_study_plan: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to fetch study plan"
         )
 
 
@@ -459,6 +617,9 @@ async def update_study_plan(
                 detail="Study plan not found"
             )
 
+        # Track if this is the first time reaching completion
+        was_already_completed = plan.completed_at is not None
+
         # Update fields
         if update_data.completion_percentage is not None:
             plan.completion_percentage = update_data.completion_percentage
@@ -466,13 +627,14 @@ async def update_study_plan(
             # Auto-complete if 100%
             if update_data.completion_percentage >= 100:
                 plan.is_active = False
-                plan.completed_at = datetime.now()
+                if not plan.completed_at:
+                    plan.completed_at = datetime.now(timezone.utc)
 
         if update_data.is_active is not None:
             plan.is_active = update_data.is_active
 
             if not update_data.is_active and not plan.completed_at:
-                plan.completed_at = datetime.now()
+                plan.completed_at = datetime.now(timezone.utc)
 
         if update_data.before_score is not None:
             plan.before_score = update_data.before_score
@@ -487,17 +649,22 @@ async def update_study_plan(
         if update_data.completed_days is not None:
             plan.completed_days = update_data.completed_days
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
         db.refresh(plan)
 
         # Invalidate analytics cache on plan completion or score updates
         if (update_data.is_active is not None and not update_data.is_active) or \
            update_data.after_score is not None or \
            (update_data.completion_percentage is not None and update_data.completion_percentage >= 100):
-            cache_delete_pattern("analytics:*")
+            cache_delete_pattern(f"analytics:*:{current_user.id}:*")
+            cache_delete_pattern(f"analytics:*:{current_user.id}")
 
-        # Send notification on plan completion
-        if plan.completion_percentage >= 100 and plan.after_score is None:
+        # Send notification on plan completion (only once — skip if already completed before this request)
+        if plan.completion_percentage >= 100 and not was_already_completed:
             try:
                 from app.services.notification_service import NotificationService
                 from app.models.notification import NotificationType, NotificationPriority
@@ -514,6 +681,20 @@ async def update_study_plan(
             except Exception as notif_err:
                 logger.warning(f"Failed to send completion notification: {notif_err}")
 
+            # Send study plan completion email (best-effort)
+            try:
+                from app.services.email_service import send_study_plan_complete_email
+                send_study_plan_complete_email(
+                    to=current_user.email,
+                    name=current_user.full_name or "Student",
+                    plan_topic=plan.topic or "Study Plan",
+                    days_completed=int(plan.completed_days or plan.duration_days or 0),
+                    total_days=int(plan.duration_days or 0),
+                )
+                logger.info(f"Sent study plan completion email to {current_user.email}")
+            except Exception as email_err:
+                logger.warning(f"Failed to send study plan completion email: {email_err}")
+
         return {
             "message": "Study plan updated successfully",
             "study_plan_id": str(plan.id),
@@ -524,11 +705,11 @@ async def update_study_plan(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in update_study_plan: {e}")
+        logger.error(f"Error in update_study_plan: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to update study plan"
         )
 
 
@@ -572,20 +753,24 @@ async def track_resource_click(
             )
 
         resource.clicked = True
-        resource.clicked_at = datetime.now()
+        resource.clicked_at = datetime.now(timezone.utc)
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
 
         return {"message": "Resource click tracked"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in track_resource_click: {e}")
+        logger.error(f"Error in track_resource_click: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to track resource click"
         )
 
 
@@ -637,22 +822,27 @@ async def mark_resource_complete(
         if completion_data.helpful_rating:
             resource.helpful_rating = completion_data.helpful_rating
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
 
         # Invalidate analytics cache on resource completion
         if completion_data.completed:
-            cache_delete_pattern("analytics:*")
+            cache_delete_pattern(f"analytics:*:{current_user.id}:*")
+            cache_delete_pattern(f"analytics:*:{current_user.id}")
 
         return {"message": "Resource marked as complete"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in mark_resource_complete: {e}")
+        logger.error(f"Error in mark_resource_complete: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to mark resource as complete"
         )
 
 
@@ -702,9 +892,13 @@ async def report_resource(
 
         resource.helpful_rating = 0
         resource.report_reason = report_data.reason
-        resource.reported_at = datetime.now()
+        resource.reported_at = datetime.now(timezone.utc)
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
 
         # Invalidate article cache for this URL
         if resource.resource_url:
@@ -719,11 +913,11 @@ async def report_resource(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in report_resource: {e}")
+        logger.error(f"Error in report_resource: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to report resource"
         )
 
 
@@ -732,7 +926,7 @@ def _estimate_duration(script: str) -> str:
     if not script:
         return "3-5 minutes"
     words = len(script.split())
-    minutes = max(1, round(words / 150))
+    minutes = max(1, min(round(words / 150), 120))  # Cap at 2 hours
     return f"~{minutes} minute{'s' if minutes != 1 else ''}"
 
 
@@ -745,17 +939,167 @@ def _estimate_duration(script: str) -> str:
     operation_id="generate_audio_summary",
     summary="Generate an audio summary for a resource",
 )
-@limiter.limit("10/minute")
+@limiter.limit("6/minute;40/hour;100/day")
 async def generate_audio(
     request: Request,
     plan_id: UUID,
     resource_id: UUID,
+    body: AudioRequest = AudioRequest(),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _ai_check=Depends(require_ai_feature("ai_audio")),
 ):
     """
     Generate a podcast-style audio summary for a study plan resource.
     Audio is lazily generated on first request and cached.
+    """
+    try:
+        plan = db.query(StudyPlan).filter(
+            StudyPlan.id == plan_id,
+            StudyPlan.user_id == current_user.id
+        ).first()
+
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Study plan not found"
+            )
+
+        # Use FOR UPDATE to prevent race condition when two requests generate audio simultaneously
+        resource = db.query(StudyPlanResource).filter(
+            StudyPlanResource.id == resource_id,
+            StudyPlanResource.study_plan_id == plan_id
+        ).with_for_update().first()
+
+        if not resource:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resource not found"
+            )
+
+        # Return cached audio if available (only if page_range matches or no page_range requested)
+        if resource.audio_file_path and not body.page_range:
+            return {
+                "audio_url": f"/api/v1/smartstudy/audio/{resource.audio_file_path}",
+                "script": resource.audio_script,
+                "duration_estimate": _estimate_duration(resource.audio_script),
+                "cached": True,
+                "page_range": body.page_range,
+            }
+
+        # Generate new audio
+        from app.services.audio_summary_service import get_audio_summary_service
+        audio_service = get_audio_summary_service()
+
+        if not audio_service.is_available:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Audio generation not configured. Use NotebookLM as an alternative."
+            )
+
+        # Extract slide content stored during plan generation
+        full_slide_content = ""
+        if plan.plan_data and isinstance(plan.plan_data, dict):
+            full_slide_content = plan.plan_data.get("_slide_content", "")
+
+        # Extract relevant page range based on activity description + explicit page_range
+        activity_desc = body.activity_description or resource.resource_description or ""
+        slide_content = extract_relevant_slides(full_slide_content, activity_desc, page_range=body.page_range)
+
+        # Include page_range in cache key to prevent wrong-page audio
+        cache_resource_id = f"{resource.id}:{body.page_range}" if body.page_range else str(resource.id)
+
+        # Smart TTS routing: primary (first of day) → ElevenLabs, secondary → OpenAI nova
+        tts_provider = "elevenlabs" if body.is_primary else "openai"
+
+        result = await audio_service.get_or_generate(
+            resource_id=cache_resource_id,
+            topic=plan.topic,
+            title=resource.resource_title or "Study Activity",
+            description=activity_desc,
+            slide_content=slide_content,
+            provider=tts_provider,
+        )
+
+        script = result.get("script")
+        provider_used = result.get("provider", tts_provider)
+
+        # TTS failed — return script as fallback (no audio file)
+        if result.get("tts_failed"):
+            # Save script even without audio so it can be shown
+            if script:
+                resource.audio_script = script
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    raise HTTPException(status_code=409, detail="Resource already exists")
+
+            return {
+                "audio_url": None,
+                "script": script,
+                "duration_estimate": _estimate_duration(script),
+                "cached": False,
+                "script_only": True,
+                "tts_error": result.get("tts_error", "Audio synthesis unavailable"),
+                "page_range": body.page_range,
+                "provider": provider_used,
+            }
+
+        # Store just the filename, not the full path
+        filename = os.path.basename(result["filepath"])
+
+        resource.audio_file_path = filename
+        resource.audio_script = script
+        resource.audio_generated_at = datetime.now(timezone.utc)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
+
+        return {
+            "audio_url": f"/api/v1/smartstudy/audio/{filename}",
+            "script": script,
+            "duration_estimate": _estimate_duration(script),
+            "cached": False,
+            "page_range": body.page_range,
+            "provider": provider_used,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating audio: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate audio summary"
+        )
+
+
+# ============================================================================
+# Practice Exercise Endpoints (Kinesthetic Learners)
+# ============================================================================
+
+@router.post(
+    "/study-plans/{plan_id}/resources/{resource_id}/exercises",
+    operation_id="generate_practice_exercises",
+    summary="Generate hands-on practice exercises for a resource",
+)
+@limiter.limit("10/minute;60/hour")
+async def generate_exercises(
+    request: Request,
+    plan_id: UUID,
+    resource_id: UUID,
+    body: ExerciseRequest = ExerciseRequest(),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _ai_check=Depends(require_ai_feature("ai_exercises")),
+):
+    """
+    Generate hands-on practice exercises for kinesthetic learners.
+    Returns structured exercises with steps, difficulty, and success criteria.
     """
     try:
         plan = db.query(StudyPlan).filter(
@@ -780,73 +1124,250 @@ async def generate_audio(
                 detail="Resource not found"
             )
 
-        # Return cached audio if available
-        if resource.audio_file_path:
-            return {
-                "audio_url": f"/api/v1/smartstudy/audio/{resource.audio_file_path}",
-                "script": resource.audio_script,
-                "duration_estimate": _estimate_duration(resource.audio_script),
-                "cached": True,
-            }
+        from app.services.practice_exercise_service import get_practice_exercise_service
+        exercise_service = get_practice_exercise_service()
 
-        # Generate new audio
-        from app.services.audio_summary_service import get_audio_summary_service
-        audio_service = get_audio_summary_service()
+        # Extract slide content stored during plan generation
+        full_slide_content = ""
+        if plan.plan_data and isinstance(plan.plan_data, dict):
+            full_slide_content = plan.plan_data.get("_slide_content", "")
 
-        if not audio_service.is_available:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Audio generation not configured. Use NotebookLM as an alternative."
-            )
+        # Use activity description + page_range to extract the RELEVANT slide section
+        activity_desc = body.activity_description or resource.resource_description or ""
+        slide_content = extract_relevant_slides(full_slide_content, activity_desc, page_range=body.page_range)
 
-        result = audio_service.get_or_generate(
-            resource_id=str(resource.id),
+        # Determine difficulty from the activity in plan_data
+        difficulty = "medium"
+        if plan.plan_data and isinstance(plan.plan_data, dict):
+            for day in plan.plan_data.get("days", []):
+                for act in day.get("activities", []):
+                    if act.get("difficulty"):
+                        difficulty = act["difficulty"]
+                        break
+
+        exercises = await exercise_service.generate_exercises(
             topic=plan.topic,
-            title=resource.resource_title or "Study Activity",
-            description=resource.resource_description or "",
+            activity_title=resource.resource_title or "Study Activity",
+            activity_description=activity_desc,
+            slide_content=slide_content,
+            difficulty=difficulty,
         )
 
-        script = result.get("script")
-
-        # TTS failed — return script as fallback (no audio file)
-        if result.get("tts_failed"):
-            # Save script even without audio so it can be shown
-            if script:
-                resource.audio_script = script
-                db.commit()
-
-            return {
-                "audio_url": None,
-                "script": script,
-                "duration_estimate": _estimate_duration(script),
-                "cached": False,
-                "script_only": True,
-                "tts_error": result.get("tts_error", "Audio synthesis unavailable"),
-            }
-
-        # Store just the filename, not the full path
-        filename = os.path.basename(result["filepath"])
-
-        resource.audio_file_path = filename
-        resource.audio_script = script
-        resource.audio_generated_at = datetime.now()
-        db.commit()
+        is_fallback = any(ex.get("is_fallback") for ex in exercises)
 
         return {
-            "audio_url": f"/api/v1/smartstudy/audio/{filename}",
-            "script": script,
-            "duration_estimate": _estimate_duration(script),
-            "cached": False,
+            "exercises": exercises,
+            "plan_id": str(plan_id),
+            "resource_id": str(resource_id),
+            "count": len(exercises),
+            "is_fallback": is_fallback,
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating audio: {e}")
-        db.rollback()
+        logger.error(f"Error generating exercises: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to generate practice exercises"
+        )
+
+
+# ============================================================================
+# Study Cards Endpoints (Reading Learners)
+# ============================================================================
+
+@router.post(
+    "/study-plans/{plan_id}/resources/{resource_id}/study-cards",
+    operation_id="generate_study_cards",
+    summary="Generate flashcards, key concepts, and comprehension questions",
+)
+@limiter.limit("10/minute;60/hour")
+async def generate_study_cards(
+    request: Request,
+    plan_id: UUID,
+    resource_id: UUID,
+    body: StudyCardsRequest = StudyCardsRequest(),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _ai_check=Depends(require_ai_feature("ai_study_plans")),
+):
+    """
+    Generate study cards for reading learners.
+    Returns flashcards, key concepts, and comprehension questions.
+    """
+    try:
+        plan = db.query(StudyPlan).filter(
+            StudyPlan.id == plan_id,
+            StudyPlan.user_id == current_user.id
+        ).first()
+
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Study plan not found"
+            )
+
+        resource = db.query(StudyPlanResource).filter(
+            StudyPlanResource.id == resource_id,
+            StudyPlanResource.study_plan_id == plan_id
+        ).first()
+
+        if not resource:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resource not found"
+            )
+
+        from app.services.study_cards_service import get_study_cards_service
+        cards_service = get_study_cards_service()
+
+        # Extract slide content stored during plan generation
+        full_slide_content = ""
+        if plan.plan_data and isinstance(plan.plan_data, dict):
+            full_slide_content = plan.plan_data.get("_slide_content", "")
+
+        # Use activity description + page_range to extract the RELEVANT slide section
+        activity_desc = body.activity_description or resource.resource_description or ""
+        slide_content = extract_relevant_slides(full_slide_content, activity_desc, page_range=body.page_range)
+
+        result = await cards_service.generate(
+            topic=plan.topic,
+            activity_title=resource.resource_title or "Study Activity",
+            activity_description=activity_desc,
+            slide_content=slide_content,
+        )
+
+        return {
+            **result,
+            "plan_id": str(plan_id),
+            "resource_id": str(resource_id),
+            "is_fallback": result.get("is_fallback", False),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating study cards: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate study cards"
+        )
+
+
+# ============================================================================
+# Exercise Step Validation (Kinesthetic Guided Solver)
+# ============================================================================
+
+@router.post(
+    "/study-plans/{plan_id}/resources/{resource_id}/exercises/validate-step",
+    operation_id="validate_exercise_step",
+    summary="Validate a student's answer for an exercise step",
+)
+@limiter.limit("20/minute;120/hour")
+async def validate_exercise_step(
+    request: Request,
+    plan_id: UUID,
+    resource_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Validate a student's answer for a specific exercise step.
+    Uses lightweight GPT call for quick feedback.
+    """
+    try:
+        body = await request.json()
+        exercise_title = body.get("exercise_title", "")
+        step_text = body.get("step_text", "")
+        student_answer = body.get("student_answer", "")
+        topic = body.get("topic", "")
+
+        if not student_answer.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="student_answer is required"
+            )
+
+        # Verify plan ownership
+        plan = db.query(StudyPlan).filter(
+            StudyPlan.id == plan_id,
+            StudyPlan.user_id == current_user.id
+        ).first()
+
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Study plan not found"
+            )
+
+        # Lightweight GPT validation
+        from app.services.openai_client import call_with_retry, CHAT_MODELS
+
+        prompt = f"""A student is working on a practice exercise and submitted their answer for a step. Evaluate it.
+
+**Topic**: {topic or plan.topic}
+**Exercise**: {exercise_title}
+**Step instruction**: {step_text}
+**Student's answer**: {student_answer[:1000]}
+
+Return ONLY valid JSON:
+{{
+  "correct": true or false,
+  "feedback": "1-2 sentence encouraging feedback",
+  "hint": "If incorrect, a helpful hint without giving the answer. If correct, null."
+}}
+
+Be encouraging. If the answer shows understanding even if imperfect, lean toward correct.
+For open-ended steps (like 'open your editor'), always mark as correct."""
+
+        try:
+            response = await asyncio.to_thread(
+                call_with_retry,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a friendly, encouraging tutor. Validate student work and provide constructive feedback. Return only valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                models=CHAT_MODELS,
+                temperature=0.3,
+                max_tokens=200,
+                timeout=15.0,
+            )
+
+            raw = response.choices[0].message.content.strip()
+            if raw.startswith("```json"):
+                raw = raw[7:]
+            if raw.startswith("```"):
+                raw = raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+
+            result = json.loads(raw)
+            return {
+                "correct": bool(result.get("correct", False)),
+                "feedback": str(result.get("feedback", "")),
+                "hint": result.get("hint"),
+            }
+
+        except Exception as gpt_err:
+            logger.warning(f"GPT validation failed: {gpt_err}")
+            return {
+                "correct": None,
+                "feedback": "Couldn't validate automatically — mark this step yourself.",
+                "hint": None,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating step: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to validate exercise step"
         )
 
 
@@ -885,7 +1406,7 @@ async def upload_to_library(
     **Returns**: Upload result with document ID or duplicate notification
     """
     try:
-        logger.info(f"📤 Library upload from {current_user.full_name}: {file.filename}")
+        logger.info(f"Library upload from user {current_user.id}: {file.filename}")
 
         # Validate file type
         file_ext = file.filename.lower().split('.')[-1]
@@ -942,20 +1463,23 @@ async def upload_to_library(
                 temp_file_path = temp_file.name
 
             try:
-                result = process_document_for_study_plan(
-                    file_path=temp_file_path,
-                    topic_hint=topic
+                # Offload to thread — process_document_for_study_plan calls call_with_retry
+                # which contains a blocking time.sleep in its retry logic
+                result = await asyncio.to_thread(
+                    process_document_for_study_plan,
+                    temp_file_path,
+                    topic,  # topic_hint
                 )
                 if result["success"]:
                     extracted_text = result["extracted_text"]
-                    logger.info(f"✅ Extracted {len(extracted_text)} characters")
+                    logger.info(f"Extracted {len(extracted_text)} characters")
             finally:
                 try:
                     os.unlink(temp_file_path)
                 except Exception as e:
                     logger.warning(f"Failed to clean up temp file: {e}")
         except Exception as e:
-            logger.warning(f"⚠️ Text extraction failed: {e}, continuing without text")
+            logger.warning(f"Text extraction failed: {e}, continuing without text")
 
         # Contribute to library
         library_result = contribute_to_library(
@@ -981,7 +1505,7 @@ async def upload_to_library(
             }
 
         if library_result.get("success"):
-            logger.info(f"✅ Document uploaded to library: {library_result.get('library_document_id')}")
+            logger.info(f"Document uploaded to library: {library_result.get('library_document_id')}")
             cache_delete_pattern("library:browse:*")
             cache_delete_pattern("library:stats*")
             cache_delete_pattern(f"library:contributions:{current_user.id}")

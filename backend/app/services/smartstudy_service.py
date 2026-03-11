@@ -2,9 +2,12 @@
 SmartStudy Service - AI Learning Intervention System
 Handles GPT-4 chat, context loading, and personalized study plan generation
 """
+import asyncio
 import logging
+import threading
+import time
 from typing import Optional, Dict, List, Any, Generator
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 import json
 
@@ -23,6 +26,19 @@ from app.services.openai_client import (
 
 logger = logging.getLogger(__name__)
 
+# --- Student context cache (thread-safe, bounded) ---
+_context_cache: Dict[str, tuple] = {}
+_context_cache_lock = threading.Lock()
+_CONTEXT_CACHE_TTL = 120  # seconds
+_CONTEXT_CACHE_MAX_SIZE = 200
+
+
+def invalidate_student_context_cache(user_id: int):
+    """Remove cached student context for a specific user."""
+    cache_key = f"student_context_{user_id}"
+    with _context_cache_lock:
+        _context_cache.pop(cache_key, None)
+
 
 def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
     """
@@ -35,6 +51,15 @@ def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
     Returns:
         Dict with student info, courses, tasks, moods, CGPA status
     """
+    # Check TTL cache first (thread-safe)
+    cache_key = f"student_context_{user_id}"
+    now = time.time()
+    with _context_cache_lock:
+        if cache_key in _context_cache:
+            cached_value, cached_time = _context_cache[cache_key]
+            if now - cached_time < _CONTEXT_CACHE_TTL:
+                return cached_value
+
     try:
         # Get user
         user = db.query(User).filter(User.id == user_id).first()
@@ -59,7 +84,7 @@ def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
             })
 
         # Get recent tasks (last 30 days)
-        thirty_days_ago = datetime.now() - timedelta(days=30)
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
         tasks = db.query(Task).filter(
             Task.user_id == user_id,
             Task.created_at >= thirty_days_ago
@@ -80,7 +105,7 @@ def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
             })
 
         # Get recent moods (last 14 days)
-        two_weeks_ago = datetime.now() - timedelta(days=14)
+        two_weeks_ago = datetime.now(timezone.utc) - timedelta(days=14)
         moods = db.query(MoodLog).filter(
             MoodLog.user_id == user_id,
             MoodLog.logged_at >= two_weeks_ago
@@ -114,6 +139,14 @@ def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
                 else None
             )
         }
+
+        # Store in TTL cache (thread-safe with LRU eviction)
+        with _context_cache_lock:
+            if len(_context_cache) >= _CONTEXT_CACHE_MAX_SIZE and cache_key not in _context_cache:
+                # Evict oldest entry
+                oldest_key = next(iter(_context_cache))
+                del _context_cache[oldest_key]
+            _context_cache[cache_key] = (context, time.time())
 
         return context
 
@@ -187,7 +220,7 @@ def build_system_prompt(context: Dict[str, Any]) -> str:
     return prompt
 
 
-def chat_with_smartstudy(
+async def chat_with_smartstudy(
     db: Session,
     user_id: str,
     message: str,
@@ -228,7 +261,10 @@ def chat_with_smartstudy(
         # Get conversation history
         messages_history = db.query(ChatMessage).filter(
             ChatMessage.conversation_id == conversation.id
-        ).order_by(ChatMessage.created_at.asc()).all()
+        ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+
+        # Reverse to chronological order (we fetched desc to limit efficiently)
+        messages_history = list(reversed(messages_history))
 
         # Build messages for GPT-4
         gpt_messages = [
@@ -236,7 +272,7 @@ def chat_with_smartstudy(
         ]
 
         # Add conversation history (last 10 messages to avoid token limit)
-        for msg in messages_history[-10:]:
+        for msg in messages_history:
             gpt_messages.append({
                 "role": msg.role,
                 "content": msg.content
@@ -248,8 +284,9 @@ def chat_with_smartstudy(
             "content": message
         })
 
-        # Call GPT-4 with retry/fallback
-        response = call_with_retry(
+        # Call GPT-4 with retry/fallback (offload to thread to avoid blocking event loop)
+        response = await asyncio.to_thread(
+            call_with_retry,
             messages=gpt_messages,
             models=CHAT_MODELS,
             max_tokens=500,
@@ -260,13 +297,14 @@ def chat_with_smartstudy(
 
         ai_message = response.choices[0].message.content
         tokens_used = response.usage.total_tokens
+        actual_model = str(response.model) if response.model else "unknown"
 
         # Save user message
         user_msg = ChatMessage(
             conversation_id=conversation.id,
             role="user",
             content=message,
-            model_used="gpt-4"
+            model_used=actual_model
         )
         db.add(user_msg)
 
@@ -276,7 +314,7 @@ def chat_with_smartstudy(
             role="assistant",
             content=ai_message,
             tokens_used=tokens_used,
-            model_used="gpt-4"
+            model_used=actual_model
         )
         db.add(ai_msg)
 
@@ -285,7 +323,7 @@ def chat_with_smartstudy(
             # Generate title from first message (first 50 chars)
             conversation.title = message[:50] + ("..." if len(message) > 50 else "")
 
-        conversation.updated_at = datetime.now()
+        conversation.updated_at = datetime.now(timezone.utc)
         db.commit()
 
         return {
@@ -340,13 +378,14 @@ def stream_chat_with_smartstudy(
         context = load_student_context(db, user_id)
         system_prompt = build_system_prompt(context)
 
-        # Get conversation history
+        # Get conversation history (last 10 only to avoid loading entire history)
         messages_history = db.query(ChatMessage).filter(
             ChatMessage.conversation_id == conversation.id
-        ).order_by(ChatMessage.created_at.asc()).all()
+        ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+        messages_history = list(reversed(messages_history))
 
         gpt_messages = [{"role": "system", "content": system_prompt}]
-        for msg in messages_history[-10:]:
+        for msg in messages_history:
             gpt_messages.append({"role": msg.role, "content": msg.content})
         gpt_messages.append({"role": "user", "content": message})
 
@@ -368,12 +407,15 @@ def stream_chat_with_smartstudy(
                 full_content += delta.content
                 yield f'data: {json.dumps({"type": "token", "content": delta.content})}\n\n'
 
+        # Streaming responses don't reliably expose .model; use first model in chain
+        stream_model = CHAT_MODELS[0] if CHAT_MODELS else "unknown"
+
         # Save user message
         user_msg = ChatMessage(
             conversation_id=conversation.id,
             role="user",
             content=message,
-            model_used="gpt-4",
+            model_used=stream_model,
         )
         db.add(user_msg)
 
@@ -382,7 +424,7 @@ def stream_chat_with_smartstudy(
             conversation_id=conversation.id,
             role="assistant",
             content=full_content,
-            model_used="gpt-4",
+            model_used=stream_model,
         )
         db.add(ai_msg)
 
@@ -390,7 +432,7 @@ def stream_chat_with_smartstudy(
         if not conversation.title:
             conversation.title = message[:50] + ("..." if len(message) > 50 else "")
 
-        conversation.updated_at = datetime.now()
+        conversation.updated_at = datetime.now(timezone.utc)
         db.commit()
 
         # Send done event
@@ -404,6 +446,8 @@ def stream_chat_with_smartstudy(
         logger.error(f"Error in stream_chat: {e}")
         db.rollback()
         yield f'data: {json.dumps({"type": "error", "error_type": "unknown", "message": "An unexpected error occurred. Please try again."})}\n\n'
+    finally:
+        db.close()  # Explicitly close session — generators outlive FastAPI's dependency scope
 
 
 def check_smartstudy_triggers(db: Session, user_id: str) -> Dict[str, Any]:
@@ -429,9 +473,17 @@ def check_smartstudy_triggers(db: Session, user_id: str) -> Dict[str, Any]:
     courses = context.get("courses", [])
 
     # TRIGGER 1: Overdue tasks (High urgency)
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
+
+    def _parse_due_date(due_date_str: str) -> datetime:
+        """Parse ISO datetime string; attach UTC if naive."""
+        dt = datetime.fromisoformat(due_date_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
     overdue_tasks = [t for t in tasks if t.get("due_date") and
-                     datetime.fromisoformat(t["due_date"]) < now and
+                     _parse_due_date(t["due_date"]) < now and
                      not t.get("is_completed")]
 
     if len(overdue_tasks) >= 2:
