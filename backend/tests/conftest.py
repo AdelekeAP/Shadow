@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("DISABLE_ML_MODELS", "true")
 os.environ.setdefault("TESTING", "true")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-integration-tests")
+os.environ.setdefault("ADMIN_EMAILS", "*")
 os.environ.setdefault("ALGORITHM", "HS256")
 os.environ.setdefault("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
 
