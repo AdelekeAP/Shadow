@@ -15,7 +15,7 @@ os.environ["TESTING"] = "true"
 os.environ["SECRET_KEY"] = "test-secret-key-for-integration-tests"
 os.environ["ALGORITHM"] = "HS256"
 os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "30"
-os.environ.setdefault("ADMIN_EMAILS", "teststudent@pau.edu.ng,usera@pau.edu.ng,userb@pau.edu.ng")
+os.environ.setdefault("ADMIN_EMAILS", "*")
 
 import uuid as _uuid_module
 

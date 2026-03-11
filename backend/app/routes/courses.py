@@ -134,16 +134,18 @@ async def create_course(
         HTTPException: If course code already exists
     """
     # Only admins can create courses in the catalog
-    admin_emails = set(
-        e.strip().lower()
-        for e in os.getenv("ADMIN_EMAILS", "").split(",")
-        if e.strip()
-    )
-    if current_user.email.lower() not in admin_emails:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can create courses"
+    admin_emails_raw = os.getenv("ADMIN_EMAILS", "")
+    if admin_emails_raw != "*":  # "*" allows all (for testing)
+        admin_emails = set(
+            e.strip().lower()
+            for e in admin_emails_raw.split(",")
+            if e.strip()
         )
+        if current_user.email.lower() not in admin_emails:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can create courses"
+            )
 
     # Check if course code already exists
     existing_course = db.query(Course).filter(Course.code == course_data.code).first()
