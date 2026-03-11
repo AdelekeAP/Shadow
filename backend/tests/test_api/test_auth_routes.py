@@ -205,3 +205,69 @@ class TestRootEndpoints:
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
+
+
+# ===================================================================
+# Auth Security Tests
+# ===================================================================
+
+def test_logout_blacklists_token(client, auth_headers):
+    """Logout should blacklist the access token"""
+    # Verify we're authenticated
+    response = client.get("/api/v1/auth/me", headers=auth_headers)
+    assert response.status_code == 200
+
+    # Logout
+    response = client.post("/api/v1/auth/logout", headers=auth_headers)
+    assert response.status_code == 200
+
+    # Token should now be blacklisted
+    response = client.get("/api/v1/auth/me", headers=auth_headers)
+    assert response.status_code == 401
+
+
+def test_refresh_token_rotation(client):
+    """Refresh should return new tokens and invalidate old refresh token"""
+    # Register and login
+    client.post("/api/v1/auth/register", json={
+        "email": "refresh@test.com",
+        "password": "TestPass123!",
+        "full_name": "Refresh Test",
+        "entry_level": "100L"
+    })
+    login_resp = client.post("/api/v1/auth/login", json={
+        "email": "refresh@test.com",
+        "password": "TestPass123!"
+    })
+    data = login_resp.json()
+    refresh_token = data.get("refresh_token")
+    if not refresh_token:
+        pytest.skip("Refresh tokens not enabled")
+
+    # Use refresh token
+    resp = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert resp.status_code == 200
+    assert "access_token" in resp.json()
+    new_refresh = resp.json().get("refresh_token")
+    assert new_refresh != refresh_token  # Should be a new token
+
+    # Old refresh token should be revoked
+    resp2 = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert resp2.status_code in [401, 400]
+
+
+def test_change_password_invalidates_old_token(client, auth_headers):
+    """Changing password should invalidate existing tokens via token_version"""
+    # Change password — note: schema field is old_password (not current_password)
+    response = client.post("/api/v1/auth/change-password", json={
+        "old_password": "SecurePass123!",
+        "new_password": "NewPassword456!"
+    }, headers=auth_headers)
+    # Accept 200 or check if the endpoint exists
+    if response.status_code == 404:
+        pytest.skip("Change password endpoint not available")
+    assert response.status_code == 200
+
+    # Old token should now be invalid
+    response = client.get("/api/v1/auth/me", headers=auth_headers)
+    assert response.status_code == 401
