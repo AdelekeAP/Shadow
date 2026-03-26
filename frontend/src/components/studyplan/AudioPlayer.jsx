@@ -1,10 +1,8 @@
 import { useState, useRef } from 'react'
-import { generateAudioSummary } from '../../services/api'
+import { generateAudioSummary, API_BASE_URL } from '../../services/api'
 import { getNotebookLMLink } from './studyPlanHelpers.jsx'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
-export default function AudioPlayer({ planId, resource, topic, activityDescription }) {
+export default function AudioPlayer({ planId, resource, topic, activityDescription, pageRange, isPrimary = true }) {
   const hasExistingAudio = !!(resource?.audio_url)
   const [state, setState] = useState(hasExistingAudio ? 'ready' : 'idle') // idle | loading | ready | error
   const [audioUrl, setAudioUrl] = useState(resource?.audio_url || null)
@@ -16,6 +14,7 @@ export default function AudioPlayer({ planId, resource, topic, activityDescripti
   const canGenerateAudio = resource && resource.id
 
   const [errorMsg, setErrorMsg] = useState(null)
+  const [audioPageRange, setAudioPageRange] = useState(null)
 
   const handleGenerate = async () => {
     if (!canGenerateAudio || state === 'loading') return
@@ -31,7 +30,7 @@ export default function AudioPlayer({ planId, resource, topic, activityDescripti
     setState('loading')
     setErrorMsg(null)
     try {
-      const result = await generateAudioSummary(planId, resource.id)
+      const result = await generateAudioSummary(planId, resource.id, activityDescription, pageRange, isPrimary)
 
       // Script-only fallback: TTS failed but script was generated
       if (result.script_only && !result.audio_url) {
@@ -46,6 +45,7 @@ export default function AudioPlayer({ planId, resource, topic, activityDescripti
       setAudioUrl(result.audio_url)
       setScript(result.script)
       setDurationEstimate(result.duration_estimate)
+      setAudioPageRange(result.page_range || pageRange)
       setState('ready')
     } catch (err) {
       console.error('Audio generation failed:', err)
@@ -110,6 +110,15 @@ export default function AudioPlayer({ planId, resource, topic, activityDescripti
 
         {durationEstimate && state === 'ready' && (
           <span className="text-[10px] text-surface-400 font-medium">{durationEstimate}</span>
+        )}
+
+        {audioPageRange && state === 'ready' && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-navy-600 font-semibold bg-gradient-to-r from-navy-50 to-surface-50 border border-navy-200/40 px-2 py-0.5 rounded-lg shadow-sm">
+            <svg className="w-2.5 h-2.5 text-navy-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+            </svg>
+            Pages {audioPageRange}
+          </span>
         )}
 
         {/* Show Script toggle — available when ready or when script-only fallback */}

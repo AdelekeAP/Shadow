@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { getStudyPlans, updateStudyPlanProgress, generateQuizFromPlan, createStudyPlanFromQuizGaps } from '../services/api'
+import { useSmartStudy } from '../contexts/SmartStudyContext'
+import { getStudyPlans, updateStudyPlanProgress, generateQuizFromPlan, createStudyPlanFromQuizGaps, getQuiz } from '../services/api'
 import StudyPlanForm from '../components/studyplan/StudyPlanForm'
 import StudyPlanDetails from '../components/studyplan/StudyPlanDetails'
 import SmartStudyChat from '../components/SmartStudyChat'
@@ -14,6 +15,7 @@ import QuizPlayer from '../components/quiz/QuizPlayer'
 import QuizResults from '../components/quiz/QuizResults'
 import GeneratingOverlay from '../components/GeneratingOverlay'
 import DiagramGenerator from '../components/studyplan/DiagramGenerator'
+import { friendlyError } from '../utils/errors'
 
 /* ─── SVG Icons ─── */
 const SparkleIcon = ({ className }) => (
@@ -67,12 +69,14 @@ const DiagramCardIcon = ({ className }) => (
 export default function SmartStudyPage() {
   const navigate = useNavigate()
   const { user, logout } = useAuth()
+  const {
+    plans, setPlans,
+    currentPlan, setCurrentPlan, selectPlan,
+    loading, loadError: ctxLoadError, loadStudyPlans,
+    generating, generationResult, clearGenerationResult,
+  } = useSmartStudy()
 
-  /* ─── Study plans state ─── */
-  const [plans, setPlans] = useState([])
-  const [currentPlan, setCurrentPlan] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [generating, setGenerating] = useState(false)
+  /* ─── Local UI state ─── */
   const [showGenerateForm, setShowGenerateForm] = useState(false)
 
   /* ─── Modal states ─── */
@@ -88,48 +92,44 @@ export default function SmartStudyPage() {
   const [activeQuiz, setActiveQuiz] = useState(null)
   const [quizAttempt, setQuizAttempt] = useState(null)
   const [quizPlanContext, setQuizPlanContext] = useState(null) // { studyPlanId, topic }
+  const [quizCreatingPlan, setQuizCreatingPlan] = useState(false)
 
-  /* ─── Generating step state ─── */
-  const [generatingStep, setGeneratingStep] = useState(0)
-
-  /* ─── Error + retry state ─── */
-  const [loadError, setLoadError] = useState(null)
+  /* ─── Generating step state (now self-contained in GeneratingOverlay) ─── */
 
   /* ─── Mobile sidebar toggle ─── */
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  /* ─── Data loading ─── */
-  useEffect(() => { loadStudyPlans() }, [])
+  /* ─── Style warning from generation ─── */
+  const [styleWarning, setStyleWarning] = useState(null)
 
-  /* ─── Generating step cycle ─── */
+  /* ─── Toast notification for inline errors ─── */
+  const [toast, setToast] = useState(null) // { message, type: 'error' | 'success' }
   useEffect(() => {
-    if (!generating || showGenerateForm) return
-    setGeneratingStep(0)
-    const interval = setInterval(() => {
-      setGeneratingStep(prev => (prev + 1) % 3)
-    }, 2500)
-    return () => clearInterval(interval)
-  }, [generating, showGenerateForm])
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 5000)
+    return () => clearTimeout(t)
+  }, [toast])
 
-  const loadStudyPlans = async () => {
-    try {
-      setLoading(true)
-      setLoadError(null)
-      const data = await getStudyPlans(false)
-      setPlans(data)
-      const active = data.find(p => p.is_active)
-      if (active) setCurrentPlan(active)
-      else if (data.length > 0) setCurrentPlan(data[0])
-    } catch (err) {
-      console.error('Error loading study plans:', err)
-      setLoadError('Failed to load study plans. Check your connection and try again.')
-    } finally {
-      setLoading(false)
+  /* ─── Consume generation result when returning to page ─── */
+  useEffect(() => {
+    if (generationResult) {
+      if (generationResult.success) {
+        setShowGenerateForm(false)
+        // Check for style recommendation warning
+        if (generationResult.plan?.style_recommendation?.warning) {
+          setStyleWarning(generationResult.plan.style_recommendation)
+        }
+      } else {
+        setToast({ message: generationResult.error || 'Failed to generate study plan. Please try again.', type: 'error' })
+      }
+      clearGenerationResult()
     }
-  }
+  }, [generationResult, clearGenerationResult])
 
-  const handlePlanGenerated = async () => {
-    await loadStudyPlans()
+  const loadError = ctxLoadError
+
+  const handlePlanGenerated = () => {
+    // Generation result is handled by context + the useEffect above
     setShowGenerateForm(false)
   }
 
@@ -138,7 +138,10 @@ export default function SmartStudyPage() {
     try {
       await updateStudyPlanProgress(currentPlan.id, { beforeScore: score })
       setCurrentPlan({ ...currentPlan, before_score: score })
-    } catch (err) { console.error('Error saving before score:', err) }
+    } catch (err) {
+      console.error('Error saving before score:', err)
+      setToast({ message: `Could not save score: ${friendlyError(err)}`, type: 'error' })
+    }
   }
 
   const handleAfterScore = async (score) => {
@@ -150,7 +153,10 @@ export default function SmartStudyPage() {
         after_score: score,
         effectiveness_score: currentPlan.before_score != null ? score - currentPlan.before_score : null,
       })
-    } catch (err) { console.error('Error saving after score:', err) }
+    } catch (err) {
+      console.error('Error saving after score:', err)
+      setToast({ message: `Could not save score: ${friendlyError(err)}`, type: 'error' })
+    }
   }
 
   const handleDayComplete = async (dayNumber) => {
@@ -164,7 +170,10 @@ export default function SmartStudyPage() {
       const pct = (next.length / totalDays) * 100
       await updateStudyPlanProgress(currentPlan.id, { completionPercentage: pct, isActive: pct < 100, completedDays: next })
       setCurrentPlan({ ...currentPlan, completed_days: next, completion_percentage: pct, is_active: pct < 100 })
-    } catch (err) { console.error('Error updating progress:', err) }
+    } catch (err) {
+      console.error('Error updating progress:', err)
+      setToast({ message: `Could not update progress: ${friendlyError(err)}`, type: 'error' })
+    }
   }
 
   /* ─── Derived stats ─── */
@@ -374,6 +383,26 @@ export default function SmartStudyPage() {
           </div>
         </section>
 
+        {/* ─── Style Warning Banner ─── */}
+        {styleWarning && (
+          <div className="mb-4 bg-amber-50 border border-amber-200/80 rounded-xl p-4 animate-fade-up">
+            <div className="flex items-start gap-3">
+              <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-[13px] font-semibold text-amber-800 mb-1">Shadow's Recommendation</p>
+                <p className="text-[12px] text-amber-700 leading-relaxed">{styleWarning.warning}</p>
+              </div>
+              <button onClick={() => setStyleWarning(null)} className="p-1 rounded-lg text-amber-400 hover:text-amber-600 hover:bg-amber-100 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ─── Generate Form ─── */}
         {showGenerateForm && (
           <section className="mb-6 animate-fade-up">
@@ -387,8 +416,6 @@ export default function SmartStudyPage() {
                 </button>
               </div>
               <StudyPlanForm
-                generating={generating}
-                setGenerating={setGenerating}
                 onPlanGenerated={handlePlanGenerated}
                 onCancel={() => setShowGenerateForm(false)}
               />
@@ -478,7 +505,7 @@ export default function SmartStudyPage() {
                     return (
                       <button
                         key={plan.id}
-                        onClick={() => { setCurrentPlan(plan); setShowGenerateForm(false); setSidebarOpen(false) }}
+                        onClick={() => { selectPlan(plan); setShowGenerateForm(false); setSidebarOpen(false) }}
                         className={`w-full text-left p-3.5 rounded-xl transition-all ${
                           isActive
                             ? 'bg-navy-800 text-white shadow-md border-l-[3px] border-l-white/60'
@@ -486,7 +513,34 @@ export default function SmartStudyPage() {
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2 mb-2">
-                          <h4 className="text-[13px] font-semibold line-clamp-2 leading-snug flex-1">{plan.topic}</h4>
+                          <div className="flex items-start gap-1.5 flex-1 min-w-0">
+                            <h4 className="text-[13px] font-semibold line-clamp-2 leading-snug flex-1">{plan.topic}</h4>
+                            {plan.learning_style && plan.learning_style !== 'auto' && (
+                              <span className={`flex-shrink-0 mt-0.5 ${isActive ? 'text-white/50' : 'text-surface-300'}`} title={plan.learning_style}>
+                                {plan.learning_style === 'visual' && (
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  </svg>
+                                )}
+                                {plan.learning_style === 'audio' && (
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" />
+                                  </svg>
+                                )}
+                                {plan.learning_style === 'reading' && (
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                                  </svg>
+                                )}
+                                {plan.learning_style === 'kinesthetic' && (
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+                                  </svg>
+                                )}
+                              </span>
+                            )}
+                          </div>
                           {plan.is_active && (
                             <span className={`flex-shrink-0 px-1.5 py-0.5 text-[10px] font-semibold rounded-md ${
                               isActive ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-600'
@@ -526,6 +580,16 @@ export default function SmartStudyPage() {
           <div className="flex-1 min-w-0">
             {currentPlan && !showGenerateForm ? (
               <div className="rounded-2xl border border-surface-200/80 bg-white overflow-hidden">
+                {/* Back button — visible on mobile, hidden on desktop where sidebar is visible */}
+                <button
+                  onClick={() => setCurrentPlan(null)}
+                  className="lg:hidden flex items-center gap-1.5 px-5 pt-4 text-[13px] font-medium text-surface-400 hover:text-navy-800 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                  </svg>
+                  Back to plans
+                </button>
                 <div className="p-6 lg:p-8">
                   <StudyPlanDetails
                     plan={currentPlan}
@@ -533,8 +597,20 @@ export default function SmartStudyPage() {
                     onPlayVideo={setPlayingVideo}
                     onSubmitBeforeScore={handleBeforeScore}
                     onSubmitAfterScore={handleAfterScore}
-                    onTakeQuiz={(plan) => {
+                    quizActive={quizPhase === 'playing'}
+                    onTakeQuiz={async (plan) => {
                       setQuizPlanContext({ studyPlanId: plan.id, topic: plan.topic })
+                      // If a section quiz was already generated, load it directly
+                      if (plan._sectionQuizId) {
+                        try {
+                          const quiz = await getQuiz(plan._sectionQuizId)
+                          setActiveQuiz(quiz)
+                          setQuizPhase('playing')
+                          return
+                        } catch (err) {
+                          console.warn('Failed to load section quiz, falling back to form:', err)
+                        }
+                      }
                       setQuizPhase('form')
                     }}
                   />
@@ -587,7 +663,17 @@ export default function SmartStudyPage() {
       {/* ── Quiz Modal Flow ── */}
       {quizPhase && (
         <div className="fixed inset-0 z-50 bg-navy-950/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto relative">
+            {/* Consistent close button */}
+            <button
+              onClick={() => { setQuizPhase(null); setActiveQuiz(null); setQuizAttempt(null); setQuizPlanContext(null) }}
+              className="absolute top-3 right-3 z-10 p-1.5 rounded-lg text-surface-300 hover:text-surface-500 hover:bg-surface-100 transition-all"
+              title="Close quiz"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
             {quizPhase === 'form' && (
               <QuizForm
                 studyPlanId={quizPlanContext?.studyPlanId}
@@ -618,8 +704,8 @@ export default function SmartStudyPage() {
                   if (!activeQuiz?.id) return
                   try {
                     setQuizPhase(null)
-                    setGenerating(true)
                     setShowGenerateForm(false)
+                    setQuizCreatingPlan(true)
                     const result = await createStudyPlanFromQuizGaps(activeQuiz.id)
                     if (result && !result.error) {
                       const freshPlans = await getStudyPlans(false)
@@ -627,15 +713,14 @@ export default function SmartStudyPage() {
                       const newPlan = freshPlans.find(p =>
                         p.id === (result.study_plan_id || result.id)
                       )
-                      if (newPlan) setCurrentPlan(newPlan)
-                      else if (freshPlans.length > 0) setCurrentPlan(freshPlans[0])
+                      if (newPlan) selectPlan(newPlan)
+                      else if (freshPlans.length > 0) selectPlan(freshPlans[0])
                     }
                   } catch (err) {
                     console.error('Failed to create study plan from quiz gaps:', err)
-                    setLoadError('Failed to generate study plan from quiz gaps. Please try again.')
-                    setGenerating(false)
+                    setToast({ message: `Could not create plan from quiz gaps: ${friendlyError(err)}`, type: 'error' })
                   } finally {
-                    setGenerating(false)
+                    setQuizCreatingPlan(false)
                     setActiveQuiz(null)
                     setQuizAttempt(null)
                     setQuizPlanContext(null)
@@ -648,7 +733,7 @@ export default function SmartStudyPage() {
         </div>
       )}
       {/* ── Generating Overlay (quiz→plan flow or background generation) ── */}
-      {generating && !showGenerateForm && <GeneratingOverlay generatingStep={generatingStep} />}
+      {(generating || quizCreatingPlan) && !showGenerateForm && <GeneratingOverlay />}
       {playingVideo && (
         <YouTubePlayer
           videoUrl={playingVideo.url}
@@ -656,6 +741,33 @@ export default function SmartStudyPage() {
           onClose={() => setPlayingVideo(null)}
           autoplay={true}
         />
+      )}
+
+      {/* ── Toast notification ── */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] animate-fade-up">
+          <div className={`flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-lg border backdrop-blur-sm ${
+            toast.type === 'error'
+              ? 'bg-red-50/95 border-red-200/80 text-red-700'
+              : 'bg-emerald-50/95 border-emerald-200/80 text-emerald-700'
+          }`}>
+            {toast.type === 'error' ? (
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
+            <p className="text-[13px] font-medium">{toast.message}</p>
+            <button onClick={() => setToast(null)} className="p-0.5 rounded-md hover:bg-black/5 transition-colors ml-1">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

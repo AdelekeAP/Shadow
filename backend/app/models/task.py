@@ -18,8 +18,8 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    user_course_id = Column(UUID(as_uuid=True), ForeignKey('user_courses.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_course_id = Column(UUID(as_uuid=True), ForeignKey('user_courses.id', ondelete='CASCADE'), nullable=False, index=True)
 
     # Task details
     title = Column(String(255), nullable=False)

@@ -10,21 +10,20 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate }
 })
 
-vi.mock('../../services/api', () => ({
-  register: vi.fn(),
+const mockRegister = vi.fn()
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ register: mockRegister, isAuthenticated: false, loading: false }),
 }))
-
-import { register } from '../../services/api'
 
 function renderRegister() {
   return render(<MemoryRouter><RegisterPage /></MemoryRouter>)
 }
 
 async function fillForm(user) {
-  await user.type(screen.getByLabelText(/full name/i), 'Test Student')
-  await user.type(screen.getByLabelText(/email address/i), 'test@pau.edu.ng')
-  await user.type(screen.getByLabelText(/^password$/i), 'SecurePass123!')
-  await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass123!')
+  await user.type(screen.getByPlaceholderText('Paul Adeleke'), 'Test Student')
+  await user.type(screen.getByPlaceholderText('your.email@pau.edu.ng'), 'test@pau.edu.ng')
+  await user.type(screen.getByPlaceholderText('Min 8 characters'), 'SecurePass123!')
+  await user.type(screen.getByPlaceholderText('Re-enter password'), 'SecurePass123!')
 }
 
 describe('RegisterPage', () => {
@@ -34,17 +33,18 @@ describe('RegisterPage', () => {
 
   it('renders registration form fields', () => {
     renderRegister()
-    expect(screen.getByLabelText(/full name/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/email address/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/confirm password/i)).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Paul Adeleke')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('your.email@pau.edu.ng')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Min 8 characters')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Re-enter password')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument()
   })
 
   it('renders PAU-specific fields (level, CGPA)', () => {
     renderRegister()
-    expect(screen.getByLabelText(/current level/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/target cgpa/i)).toBeInTheDocument()
+    // Level select and Target CGPA field
+    expect(screen.getByDisplayValue('400 Level')).toBeInTheDocument()
+    expect(screen.getByText(/target cgpa/i)).toBeInTheDocument()
     expect(screen.getByDisplayValue('4.50')).toBeInTheDocument()
   })
 
@@ -52,10 +52,10 @@ describe('RegisterPage', () => {
     const user = userEvent.setup()
     renderRegister()
 
-    await user.type(screen.getByLabelText(/full name/i), 'Test User')
-    await user.type(screen.getByLabelText(/email address/i), 'test@pau.edu.ng')
-    await user.type(screen.getByLabelText(/^password$/i), 'Password123!')
-    await user.type(screen.getByLabelText(/confirm password/i), 'DifferentPass!')
+    await user.type(screen.getByPlaceholderText('Paul Adeleke'), 'Test User')
+    await user.type(screen.getByPlaceholderText('your.email@pau.edu.ng'), 'test@pau.edu.ng')
+    await user.type(screen.getByPlaceholderText('Min 8 characters'), 'Password123!')
+    await user.type(screen.getByPlaceholderText('Re-enter password'), 'DifferentPass1!')
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     await waitFor(() => {
@@ -67,10 +67,10 @@ describe('RegisterPage', () => {
     const user = userEvent.setup()
     renderRegister()
 
-    await user.type(screen.getByLabelText(/full name/i), 'Test User')
-    await user.type(screen.getByLabelText(/email address/i), 'test@pau.edu.ng')
-    await user.type(screen.getByLabelText(/^password$/i), 'short')
-    await user.type(screen.getByLabelText(/confirm password/i), 'short')
+    await user.type(screen.getByPlaceholderText('Paul Adeleke'), 'Test User')
+    await user.type(screen.getByPlaceholderText('your.email@pau.edu.ng'), 'test@pau.edu.ng')
+    await user.type(screen.getByPlaceholderText('Min 8 characters'), 'short')
+    await user.type(screen.getByPlaceholderText('Re-enter password'), 'short')
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     await waitFor(() => {
@@ -79,7 +79,7 @@ describe('RegisterPage', () => {
   })
 
   it('calls register API with correct data on submission', async () => {
-    register.mockResolvedValue({ access_token: 'tok', user: { id: 1 } })
+    mockRegister.mockResolvedValue({ access_token: 'tok', user: { id: 1 } })
     const user = userEvent.setup()
     renderRegister()
 
@@ -87,8 +87,8 @@ describe('RegisterPage', () => {
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     await waitFor(() => {
-      expect(register).toHaveBeenCalledTimes(1)
-      const callArgs = register.mock.calls[0][0]
+      expect(mockRegister).toHaveBeenCalledTimes(1)
+      const callArgs = mockRegister.mock.calls[0][0]
       expect(callArgs.full_name).toBe('Test Student')
       expect(callArgs.email).toBe('test@pau.edu.ng')
       expect(callArgs.entry_level).toBe('400L')
@@ -96,7 +96,7 @@ describe('RegisterPage', () => {
   })
 
   it('navigates to dashboard on successful registration', async () => {
-    register.mockResolvedValue({ access_token: 'tok', user: { id: 1 } })
+    mockRegister.mockResolvedValue({ access_token: 'tok', user: { id: 1 } })
     const user = userEvent.setup()
     renderRegister()
 
@@ -109,7 +109,7 @@ describe('RegisterPage', () => {
   })
 
   it('displays API error on failed registration', async () => {
-    register.mockRejectedValue({ detail: 'Email already registered' })
+    mockRegister.mockRejectedValue({ detail: 'Email already registered' })
     const user = userEvent.setup()
     renderRegister()
 
@@ -123,6 +123,6 @@ describe('RegisterPage', () => {
 
   it('has link to login page', () => {
     renderRegister()
-    expect(screen.getByText(/login here/i)).toBeInTheDocument()
+    expect(screen.getByText('Sign in')).toBeInTheDocument()
   })
 })

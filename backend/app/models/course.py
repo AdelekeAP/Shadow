@@ -1,7 +1,7 @@
 """
 Course and UserCourse Models - SQLAlchemy ORM
 """
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, Boolean, Text, ForeignKey
+from sqlalchemy import Column, Index, String, Integer, Numeric, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -58,6 +58,12 @@ class UserCourse(Base):
     Tracks grades, predictions, and completion
     """
     __tablename__ = "user_courses"
+    __table_args__ = (
+        Index('ix_user_courses_user_course', 'user_id', 'course_id'),
+        Index('ix_user_courses_user_semester', 'user_id', 'semester_id'),
+        Index('ix_user_courses_course_id', 'course_id'),
+        Index('ix_user_courses_semester_id', 'semester_id'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)

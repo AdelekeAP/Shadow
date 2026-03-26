@@ -32,6 +32,15 @@ export default function DiagramGenerator({ onClose, courseCode = null, initialTo
   const [showContext, setShowContext] = useState(false)
   const [genStep, setGenStep] = useState(0)
 
+  // Close on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
   // Step cycle during generation (matches GeneratingOverlay pattern)
   useEffect(() => {
     if (!loading) return
@@ -57,7 +66,8 @@ export default function DiagramGenerator({ onClose, courseCode = null, initialTo
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-navy-950/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-navy-950/40 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto animate-scale-in">
 
         {/* ═══ Header ═══ */}

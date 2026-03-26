@@ -143,7 +143,16 @@ export default function QuizForm({ onQuizGenerated, onCancel, studyPlanId, study
       onQuizGenerated(result)
     } catch (err) {
       console.error('Error generating quiz:', err)
-      setError(err?.detail || err?.message || 'Failed to generate quiz. Please try again.')
+      const detail = err?.detail || err?.response?.data?.detail || err?.message || ''
+      if (typeof detail === 'string' && (detail.includes('429') || /rate.?limit/i.test(detail))) {
+        setError('Too many requests — please wait a minute and try again.')
+      } else if (typeof detail === 'string' && /quota|insufficient/i.test(detail)) {
+        setError('AI quota reached for today. Please try again tomorrow.')
+      } else if (typeof detail === 'string' && /timeout/i.test(detail)) {
+        setError('Request timed out. Please try again.')
+      } else {
+        setError(typeof detail === 'string' && detail.length > 0 ? detail : 'Failed to generate quiz. Please try again.')
+      }
     } finally {
       setGenerating(false)
     }

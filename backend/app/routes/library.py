@@ -51,10 +51,17 @@ def _check_document_access(document: LibraryDocument, user: User) -> None:
     """
     Validate that a user can access a document.
 
-    Raises HTTPException if access is denied (private doc or unscanned doc
-    that doesn't belong to the requesting user).
+    Raises HTTPException if access is denied (private doc, infected doc,
+    or unscanned doc that doesn't belong to the requesting user).
     """
     is_owner = str(document.uploaded_by) == str(user.id)
+
+    # Block infected files for everyone, including owners
+    if document.scan_status == "infected":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This document has been flagged by our security scan and cannot be downloaded"
+        )
 
     if not document.is_public and not is_owner:
         raise HTTPException(
@@ -75,7 +82,9 @@ def _check_document_access(document: LibraryDocument, user: User) -> None:
     operation_id="browse_library",
     summary="Browse library documents with optional filters",
 )
+@limiter.limit("60/minute")
 async def browse_library_documents(
+    request: Request,
     course_id: Optional[str] = Query(None, description="Filter by course UUID"),
     week_number: Optional[int] = Query(None, ge=1, le=15, description="Filter by week (1-15)"),
     file_type: Optional[str] = Query(None, description="Filter by file type (pdf, pptx, ppt)"),
@@ -140,7 +149,7 @@ async def browse_library_documents(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error browsing library: {e}")
+        logger.error(f"Error browsing library: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to browse library"
@@ -183,7 +192,7 @@ async def get_library_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error getting document: {e}")
+        logger.error(f"Error getting document: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get document"
@@ -270,7 +279,7 @@ async def vote_on_library_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error voting on document: {e}")
+        logger.error(f"Error voting on document: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to record vote"
@@ -320,7 +329,7 @@ async def view_library_document(
                 content_type = 'application/pdf'
                 # Keep original filename but as PDF
                 serving_file_name = os.path.splitext(document.file_name)[0] + '.pdf'
-                logger.info(f"📄 Serving converted PDF for {document.file_name}")
+                logger.info(f"Serving converted PDF for {document.file_name}")
             else:
                 # No converted PDF available
                 raise HTTPException(
@@ -333,7 +342,7 @@ async def view_library_document(
 
         # Check if file exists
         if not os.path.exists(file_to_serve):
-            logger.error(f"❌ File not found on disk: {file_to_serve}")
+            logger.error(f"File not found on disk: {file_to_serve}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="File not found on server"
@@ -341,22 +350,20 @@ async def view_library_document(
 
         # Increment view count
         increment_view_count(db, document_id)
-        cache_delete_pattern("library:browse:*")
-        cache_delete_pattern(f"library:contributions:{document.uploaded_by}")
 
         # Return file for inline viewing
         return FileResponse(
             path=file_to_serve,
             media_type=content_type,
             headers={
-                "Content-Disposition": f"inline; filename={serving_file_name}"
+                "Content-Disposition": f'inline; filename="{serving_file_name}"'
             }
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error viewing document: {e}")
+        logger.error(f"Error viewing document: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to view document"
@@ -368,7 +375,9 @@ async def view_library_document(
     operation_id="download_library_document",
     summary="Download a library document",
 )
+@limiter.limit("100/hour")
 async def download_library_document(
+    request: Request,
     document_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -395,7 +404,7 @@ async def download_library_document(
 
         # Check if file exists
         if not os.path.exists(document.file_path):
-            logger.error(f"❌ File not found on disk: {document.file_path}")
+            logger.error(f"File not found on disk: {document.file_path}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="File not found on server"
@@ -403,8 +412,6 @@ async def download_library_document(
 
         # Increment download count
         increment_download_count(db, document_id)
-        cache_delete_pattern("library:browse:*")
-        cache_delete_pattern(f"library:contributions:{document.uploaded_by}")
 
         # Return file
         return FileResponse(
@@ -416,7 +423,7 @@ async def download_library_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error downloading document: {e}")
+        logger.error(f"Error downloading document: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to download document"
@@ -458,7 +465,7 @@ async def get_my_contributions(
         return stats
 
     except Exception as e:
-        logger.error(f"❌ Error getting user contributions: {e}")
+        logger.error(f"Error getting user contributions: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get contributions"
@@ -541,7 +548,7 @@ async def get_library_stats(
         return result
 
     except Exception as e:
-        logger.error(f"❌ Error getting library stats: {e}")
+        logger.error(f"Error getting library stats: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get library stats"

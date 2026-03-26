@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AuthProvider, useAuth } from '../AuthContext'
@@ -8,10 +8,11 @@ vi.mock('../../services/api', () => ({
   register: vi.fn(),
   logout: vi.fn(),
   getCurrentUser: vi.fn(),
+  fetchCurrentUser: vi.fn(),
   isAuthenticated: vi.fn(),
 }))
 
-import { login, register, logout, getCurrentUser } from '../../services/api'
+import { login, register, logout, getCurrentUser, fetchCurrentUser } from '../../services/api'
 
 // Test component that exposes auth state
 function AuthDisplay() {
@@ -34,6 +35,7 @@ describe('AuthContext', () => {
     vi.clearAllMocks()
     localStorage.clear()
     getCurrentUser.mockReturnValue(null)
+    fetchCurrentUser.mockRejectedValue(new Error('No token'))
   })
 
   it('provides initial unauthenticated state', async () => {
@@ -49,7 +51,7 @@ describe('AuthContext', () => {
 
   it('restores user from localStorage on mount', async () => {
     localStorage.setItem('access_token', 'saved-token')
-    getCurrentUser.mockReturnValue({ full_name: 'Saved User' })
+    fetchCurrentUser.mockResolvedValue({ full_name: 'Saved User' })
 
     render(
       <AuthProvider><AuthDisplay /></AuthProvider>
@@ -66,6 +68,8 @@ describe('AuthContext', () => {
       access_token: 'new-token',
       user: { full_name: 'Test Student' }
     })
+    // After login sets the token, the useEffect validates via fetchCurrentUser
+    fetchCurrentUser.mockResolvedValue({ full_name: 'Test Student' })
     const user = userEvent.setup()
     render(
       <AuthProvider><AuthDisplay /></AuthProvider>
@@ -84,7 +88,7 @@ describe('AuthContext', () => {
 
   it('clears state on logout', async () => {
     localStorage.setItem('access_token', 'saved-token')
-    getCurrentUser.mockReturnValue({ full_name: 'Saved User' })
+    fetchCurrentUser.mockResolvedValue({ full_name: 'Saved User' })
     const user = userEvent.setup()
 
     render(
@@ -96,8 +100,10 @@ describe('AuthContext', () => {
 
     await user.click(screen.getByText('Logout'))
 
-    expect(screen.getByTestId('authenticated')).toHaveTextContent('no')
-    expect(screen.getByTestId('user')).toHaveTextContent('none')
+    await waitFor(() => {
+      expect(screen.getByTestId('authenticated')).toHaveTextContent('no')
+      expect(screen.getByTestId('user')).toHaveTextContent('none')
+    })
     expect(logout).toHaveBeenCalled()
   })
 

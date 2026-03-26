@@ -367,19 +367,19 @@ class TestGetSuggestedPrompts:
 class TestChatWithSmartStudy:
 
     @patch("app.services.smartstudy_service.call_with_retry")
-    def test_no_openai_client_returns_error(self, mock_call, db_session, test_user):
+    async def test_no_openai_client_returns_error(self, mock_call, db_session, test_user):
         from app.services.openai_client import OpenAIError, OpenAIErrorType
         mock_call.side_effect = OpenAIError(
             error_type=OpenAIErrorType.auth_error,
             user_message="OpenAI client not initialized. Please check OPENAI_API_KEY.",
         )
-        result = chat_with_smartstudy(db_session, test_user.id, "Hello")
+        result = await chat_with_smartstudy(db_session, test_user.id, "Hello")
         assert "error" in result
         assert "OpenAI" in result["error"]
 
     @patch("app.services.smartstudy_service.load_student_context")
     @patch("app.services.smartstudy_service.call_with_retry")
-    def test_successful_chat(self, mock_call, mock_load, db_session, test_user):
+    async def test_successful_chat(self, mock_call, mock_load, db_session, test_user):
         mock_load.return_value = {
             "student_info": {"name": "Test"},
             "courses": [],
@@ -404,7 +404,7 @@ class TestChatWithSmartStudy:
 
         mock_call.return_value = mock_response
 
-        result = chat_with_smartstudy(db_session, test_user.id, "Hi there")
+        result = await chat_with_smartstudy(db_session, test_user.id, "Hi there")
 
         assert "error" not in result
         assert "conversation_id" in result

@@ -3,7 +3,7 @@ Quiz Routes - AI-Powered Knowledge Testing
 """
 import asyncio
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status, Header, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
@@ -15,35 +15,27 @@ from app.models.smartstudy import StudyPlan
 from app.schemas.smartstudy import QuizCreate, QuizSubmission
 from app.utils.auth import get_current_user
 from app.middleware.rate_limiter import limiter
+from app.utils.ai_guard import require_ai_feature
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/quizzes", tags=["SmartStudy"])
 
 
-async def get_user_from_token(
-    authorization: str = Header(...),
-    db: Session = Depends(get_db)
-) -> User:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication scheme")
-    token = authorization.replace("Bearer ", "")
-    return await get_current_user(token, db)
-
-
 @router.post("/")
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def create_quiz(
     request: Request,
     quiz_data: QuizCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
+    _ai_check=Depends(require_ai_feature("ai_quizzes")),
 ):
     """Generate a quiz from a topic"""
     from app.services.quiz_generator import generate_quiz
 
     try:
-        result = generate_quiz(
+        result = await generate_quiz(
             db=db,
             user_id=str(current_user.id),
             topic=quiz_data.topic,
@@ -58,12 +50,12 @@ async def create_quiz(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Quiz generation failed: {e}")
+        logger.error(f"Quiz generation failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate quiz")
 
 
 @router.post("/upload")
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def create_quiz_with_upload(
     request: Request,
     topic: str = Form(None),
@@ -74,7 +66,8 @@ async def create_quiz_with_upload(
     difficulty_level: str = Form("mixed"),
     course_id: str = Form(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
+    _ai_check=Depends(require_ai_feature("ai_quizzes")),
 ):
     """Generate a quiz from an uploaded document"""
     import tempfile
@@ -135,14 +128,14 @@ async def create_quiz_with_upload(
                 topics = await asyncio.to_thread(extract_topics_with_gpt4, slide_content[:3000])
                 extracted_topic = topics.get("main_topic")
         except Exception as e:
-            logger.error(f"Document processing failed: {e}")
+            logger.error(f"Document processing failed: {e}", exc_info=True)
             raise HTTPException(status_code=422, detail=f"Could not extract content from {file_ext.upper()} file. The file may be corrupted or password-protected.")
 
     if not extracted_topic:
         extracted_topic = "General Knowledge"
 
     try:
-        quiz_result = generate_quiz(
+        quiz_result = await generate_quiz(
             db=db,
             user_id=str(current_user.id),
             topic=extracted_topic,
@@ -158,19 +151,20 @@ async def create_quiz_with_upload(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Quiz generation with upload failed: {e}")
+        logger.error(f"Quiz generation with upload failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate quiz")
 
 
 @router.post("/from-plan/{plan_id}")
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def create_quiz_from_plan(
     request: Request,
     plan_id: str,
     quiz_type: str = "topic_review",
     question_count: int = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
+    _ai_check=Depends(require_ai_feature("ai_quizzes")),
 ):
     """Generate a quiz from an existing study plan"""
     from app.services.quiz_generator import generate_quiz
@@ -184,8 +178,13 @@ async def create_quiz_from_plan(
     if not plan:
         raise HTTPException(status_code=404, detail="Study plan not found")
 
+    # Extract slide content from plan for grounded quiz generation
+    slide_content = None
+    if plan.plan_data and isinstance(plan.plan_data, dict):
+        slide_content = plan.plan_data.get("_slide_content", "") or None
+
     try:
-        result = generate_quiz(
+        result = await generate_quiz(
             db=db,
             user_id=str(current_user.id),
             topic=plan.topic,
@@ -193,20 +192,85 @@ async def create_quiz_from_plan(
             question_count=question_count,
             course_id=str(plan.course_id) if plan.course_id else None,
             study_plan_id=str(plan.id),
+            slide_content=slide_content,
         )
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Quiz from plan failed: {e}")
+        logger.error(f"Quiz from plan failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate quiz from study plan")
+
+
+@router.post("/from-plan/{plan_id}/section")
+@limiter.limit("10/minute")
+async def create_section_quiz(
+    request: Request,
+    plan_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _ai_check=Depends(require_ai_feature("ai_quizzes")),
+):
+    """Generate a quiz for a specific section (page range) of a study plan's slides"""
+    from app.services.quiz_generator import generate_quiz
+    from app.routes.smartstudy.study_plans import extract_relevant_slides
+
+    body = await request.json()
+    page_range = body.get("page_range")
+    activity_description = body.get("activity_description", "")
+    question_count = body.get("question_count", 5)
+
+    if not page_range and not activity_description:
+        raise HTTPException(status_code=400, detail="Provide page_range or activity_description")
+
+    plan_uuid = UUID(plan_id)
+    plan = db.query(StudyPlan).filter(
+        StudyPlan.id == plan_uuid,
+        StudyPlan.user_id == current_user.id,
+    ).first()
+
+    if not plan:
+        raise HTTPException(status_code=404, detail="Study plan not found")
+
+    # Extract slide content from plan
+    full_slide_content = ""
+    if plan.plan_data and isinstance(plan.plan_data, dict):
+        full_slide_content = plan.plan_data.get("_slide_content", "")
+
+    if not full_slide_content:
+        raise HTTPException(status_code=400, detail="No slide content available for this plan. Section quizzes require uploaded slides.")
+
+    # Extract only the relevant section
+    section_content = extract_relevant_slides(full_slide_content, activity_description, page_range=page_range)
+
+    section_label = f"pages {page_range}" if page_range else "selected section"
+    section_topic = f"{plan.topic} — {section_label}"
+
+    try:
+        result = await generate_quiz(
+            db=db,
+            user_id=str(current_user.id),
+            topic=section_topic,
+            quiz_type="section_review",
+            question_count=min(question_count, 10),
+            course_id=str(plan.course_id) if plan.course_id else None,
+            study_plan_id=str(plan.id),
+            slide_content=section_content,
+        )
+        result["section_page_range"] = page_range
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Section quiz generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate section quiz")
 
 
 @router.get("/")
 async def list_quizzes(
     topic: str = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
 ):
     """List user's quizzes"""
     query = db.query(Quiz).filter(Quiz.user_id == current_user.id)
@@ -229,7 +293,7 @@ async def list_quizzes(
 async def get_quiz(
     quiz_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
 ):
     """Get a quiz for taking (answers stripped)"""
     quiz = db.query(Quiz).filter(
@@ -257,7 +321,7 @@ async def submit_quiz(
     quiz_id: str,
     submission: QuizSubmission,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
 ):
     """Submit quiz answers and get graded results"""
     from app.services.quiz_generator import grade_quiz
@@ -272,12 +336,12 @@ async def submit_quiz(
 
     if attempt_count >= MAX_ATTEMPTS:
         raise HTTPException(
-            status_code=429,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Maximum of {MAX_ATTEMPTS} attempts reached for this quiz. Generate a new quiz to continue practicing."
         )
 
     try:
-        result = grade_quiz(
+        result = await grade_quiz(
             db=db,
             user_id=str(current_user.id),
             quiz_id=quiz_id,
@@ -289,7 +353,7 @@ async def submit_quiz(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Quiz submission failed: {e}")
+        logger.error(f"Quiz submission failed for quiz {quiz_id}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to grade quiz")
 
 
@@ -297,7 +361,7 @@ async def submit_quiz(
 async def get_quiz_attempts(
     quiz_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
 ):
     """Get all attempts for a specific quiz"""
     attempts = db.query(QuizAttempt).filter(
@@ -314,7 +378,7 @@ async def create_study_plan_from_quiz_gaps(
     request: Request,
     quiz_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token),
+    current_user: User = Depends(get_current_user),
 ):
     """Generate a study plan targeting weak topics identified in a quiz attempt.
     Uses the original document content (if quiz was from an upload) to focus
@@ -349,7 +413,7 @@ async def create_study_plan_from_quiz_gaps(
     focused_topic = f"{quiz.topic} — focusing on: {', '.join(weak_names)}"
 
     try:
-        result = generate_study_plan(
+        result = await generate_study_plan(
             db=db,
             user_id=str(current_user.id),
             topic=focused_topic,
@@ -363,5 +427,5 @@ async def create_study_plan_from_quiz_gaps(
         result["quiz_score"] = float(latest_attempt.score)
         return result
     except Exception as e:
-        logger.error(f"Study plan from quiz gaps failed: {e}")
+        logger.error(f"Study plan from quiz gaps failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate study plan from quiz gaps")

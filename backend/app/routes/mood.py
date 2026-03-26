@@ -3,8 +3,7 @@ Mood Logging API Routes
 """
 import logging
 import os
-import re
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import List, Dict, Optional
@@ -12,24 +11,16 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.user import User
 from app.models.mood import MoodLog
 from app.utils.auth import get_current_user
 from app.services.sentiment_analysis import analyze_sentiment
+from app.middleware.rate_limiter import limiter
 
 
-def _sanitize_text(text: str) -> str:
-    """Strip HTML tags and dangerous patterns from user input to prevent XSS."""
-    if not text:
-        return text
-    # Remove HTML tags
-    cleaned = re.sub(r'<[^>]+>', '', text)
-    # Remove javascript: protocol
-    cleaned = re.sub(r'javascript:', '', cleaned, flags=re.IGNORECASE)
-    # Remove event handlers
-    cleaned = re.sub(r'on\w+\s*=', '', cleaned, flags=re.IGNORECASE)
-    return cleaned.strip()
+from app.utils.input_sanitizer import sanitize_text as _sanitize_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,7 +53,9 @@ class MoodLogResponse(BaseModel):
     operation_id="log_mood",
     summary="Log current mood and energy level",
 )
+@limiter.limit("20/minute")
 def log_mood(
+    request: Request,
     mood_data: MoodLogCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -120,7 +113,11 @@ def log_mood(
         )
 
         db.add(mood_log)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
         db.refresh(mood_log)
 
         response = {
@@ -172,8 +169,8 @@ def log_mood(
         raise
     except Exception as e:
         db.rollback()
-        logger.error("Error logging mood: %s", e)
-        raise HTTPException(status_code=500, detail=f"Error logging mood: {str(e)}")
+        logger.error("Error logging mood: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to log mood")
 
 
 @router.get(
@@ -202,8 +199,8 @@ def get_mood_history(
         }
 
     except Exception as e:
-        logger.error("Error fetching mood history: %s", e)
-        raise HTTPException(status_code=500, detail=f"Error fetching mood history: {str(e)}")
+        logger.error("Error fetching mood history: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch mood history")
 
 
 @router.get(
@@ -295,8 +292,8 @@ def get_mood_trends(
         }
 
     except Exception as e:
-        logger.error("Error calculating mood trends: %s", e)
-        raise HTTPException(status_code=500, detail=f"Error calculating mood trends: {str(e)}")
+        logger.error("Error calculating mood trends: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to calculate mood trends")
 
 
 @router.get(
@@ -334,5 +331,5 @@ def get_recent_energy(
         }
 
     except Exception as e:
-        logger.error("Error fetching recent energy: %s", e)
-        raise HTTPException(status_code=500, detail=f"Error fetching recent energy: {str(e)}")
+        logger.error("Error fetching recent energy: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch recent energy")

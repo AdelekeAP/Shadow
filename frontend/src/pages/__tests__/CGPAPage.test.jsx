@@ -16,6 +16,14 @@ vi.mock('../../components/WhatIfCalculator', () => ({
   ),
 }))
 
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    user: { full_name: 'Test Student', target_cgpa: 4.5, current_cgpa: 3.8 },
+    isAuthenticated: true,
+    loading: false,
+  }),
+}))
+
 function renderCGPAPage() {
   return render(<MemoryRouter><CGPAPage /></MemoryRouter>)
 }

@@ -3,7 +3,7 @@ Analytics Routes - Effectiveness Analytics Dashboard API
 Provides aggregated analytics on SmartStudy intervention effectiveness
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case, and_
 from typing import List, Dict, Any
 from datetime import datetime, timedelta, timezone
@@ -11,10 +11,12 @@ from uuid import UUID
 import math
 import statistics as pystats
 
+from fastapi import Request as FastAPIRequest
 from app.database import get_db
 from app.utils.auth import get_current_user
 from app.models.user import User
 from app.services.cache_service import cache_get, cache_set, TTL_ANALYTICS
+from app.middleware.rate_limiter import limiter
 from app.models.smartstudy import (
     StudyPlan,
     StudyPlanResource,
@@ -65,7 +67,9 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
         401: {"description": "Missing or invalid JWT token."},
     },
 )
+@limiter.limit("30/minute")
 async def get_effectiveness_summary(
+    request: FastAPIRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -89,57 +93,62 @@ async def get_effectiveness_summary(
     if cached:
         return cached
 
-    # Get all study plans
-    study_plans = db.query(StudyPlan).filter(
-        StudyPlan.user_id == user_id
-    ).all()
+    # Aggregate study plan stats in SQL
+    plan_stats = db.query(
+        func.count(StudyPlan.id).label('total'),
+        func.sum(case((StudyPlan.is_active == True, 1), else_=0)).label('active'),
+        func.sum(case((StudyPlan.is_active == False, 1), else_=0)).label('completed'),
+        func.sum(case(
+            (and_(StudyPlan.before_score.isnot(None), StudyPlan.after_score.isnot(None)), 1),
+            else_=0
+        )).label('with_scores'),
+        func.avg(case(
+            (and_(StudyPlan.before_score.isnot(None), StudyPlan.after_score.isnot(None)),
+             StudyPlan.after_score - StudyPlan.before_score),
+            else_=None
+        )).label('avg_improvement'),
+        func.sum(case(
+            (and_(StudyPlan.before_score.isnot(None), StudyPlan.after_score.isnot(None),
+                  StudyPlan.after_score > StudyPlan.before_score), 1),
+            else_=0
+        )).label('positive_improvements'),
+    ).filter(StudyPlan.user_id == user_id).first()
 
-    # Get completed study plans with before/after scores
-    completed_plans = [p for p in study_plans if p.after_score is not None and p.before_score is not None]
+    # Aggregate resource engagement stats in SQL
+    resource_stats = db.query(
+        func.count(StudyPlanResource.id).label('total'),
+        func.sum(case((StudyPlanResource.clicked == True, 1), else_=0)).label('clicked'),
+        func.sum(case((StudyPlanResource.completed == True, 1), else_=0)).label('completed'),
+        func.count(StudyPlanResource.helpful_rating).label('rated_count'),
+        func.avg(StudyPlanResource.helpful_rating).label('avg_rating'),
+    ).join(StudyPlan).filter(StudyPlan.user_id == user_id).first()
 
-    # Calculate average improvement
-    total_improvement = 0
-    improvements = []
-    for plan in completed_plans:
-        improvement = float(plan.after_score) - float(plan.before_score)
-        total_improvement += improvement
-        improvements.append(improvement)
+    total_resources = int(resource_stats.total or 0)
+    clicked_resources = int(resource_stats.clicked or 0)
+    completed_resources = int(resource_stats.completed or 0)
+    avg_rating = float(resource_stats.avg_rating or 0)
 
-    avg_improvement = total_improvement / len(completed_plans) if completed_plans else 0
-
-    # Get resource engagement stats
-    resources = db.query(StudyPlanResource).join(StudyPlan).filter(
-        StudyPlan.user_id == user_id
-    ).all()
-
-    total_resources = len(resources)
-    clicked_resources = len([r for r in resources if r.clicked])
-    completed_resources = len([r for r in resources if r.completed])
-    rated_resources = [r for r in resources if r.helpful_rating is not None]
-    avg_rating = sum(r.helpful_rating for r in rated_resources) / len(rated_resources) if rated_resources else 0
-
-    # Calculate engagement rate
     engagement_rate = (clicked_resources / total_resources * 100) if total_resources > 0 else 0
     completion_rate = (completed_resources / total_resources * 100) if total_resources > 0 else 0
 
     # Get chat conversation count
-    conversations = db.query(ChatConversation).filter(
+    conversations = db.query(func.count(ChatConversation.id)).filter(
         ChatConversation.user_id == user_id
-    ).count()
+    ).scalar()
 
     # Get messages count
-    messages = db.query(ChatMessage).join(ChatConversation).filter(
+    messages = db.query(func.count(ChatMessage.id)).join(ChatConversation).filter(
         ChatConversation.user_id == user_id
-    ).count()
+    ).scalar()
 
     result = {
         "summary": {
-            "total_study_plans": len(study_plans),
-            "active_study_plans": len([p for p in study_plans if p.is_active]),
-            "completed_study_plans": len([p for p in study_plans if not p.is_active]),
-            "plans_with_improvement_data": len(completed_plans),
-            "average_improvement": round(avg_improvement, 2),
-            "positive_improvements": len([i for i in improvements if i > 0]),
+            "total_study_plans": int(plan_stats.total or 0),
+            "active_study_plans": int(plan_stats.active or 0),
+            "completed_study_plans": int(plan_stats.completed or 0),
+            "plans_with_improvement_data": int(plan_stats.with_scores or 0),
+            "average_improvement": round(float(plan_stats.avg_improvement or 0), 2),
+            "positive_improvements": int(plan_stats.positive_improvements or 0),
             "total_conversations": conversations,
             "total_messages": messages
         },
@@ -150,7 +159,7 @@ async def get_effectiveness_summary(
             "engagement_rate": round(engagement_rate, 1),
             "completion_rate": round(completion_rate, 1),
             "average_helpful_rating": round(avg_rating, 1),
-            "rated_resources_count": len(rated_resources)
+            "rated_resources_count": int(resource_stats.rated_count or 0)
         }
     }
 
@@ -206,7 +215,9 @@ async def get_effectiveness_summary(
         401: {"description": "Missing or invalid JWT token."},
     },
 )
+@limiter.limit("30/minute")
 async def get_effectiveness_by_learning_style(
+    request: FastAPIRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -225,6 +236,11 @@ async def get_effectiveness_by_learning_style(
     and for recommending optimal resource types in future study plans.
     """
     user_id = current_user.id
+
+    cache_key = f"analytics:by_learning_style:{user_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
 
     # Get study plans grouped by learning style
     plans_by_style = db.query(
@@ -270,10 +286,12 @@ async def get_effectiveness_by_learning_style(
             "avg_rating": round(float(res_data[4] or 0), 1)
         }
 
-    return {
+    result = {
         "by_learning_style": learning_styles,
         "by_resource_type": resource_types
     }
+    cache_set(cache_key, result, TTL_ANALYTICS)
+    return result
 
 
 @router.get(
@@ -303,7 +321,9 @@ async def get_effectiveness_by_learning_style(
         401: {"description": "Missing or invalid JWT token."},
     },
 )
+@limiter.limit("30/minute")
 async def get_effectiveness_over_time(
+    request: FastAPIRequest,
     days: int = 30,
     limit: int = 100,
     offset: int = 0,
@@ -326,6 +346,12 @@ async def get_effectiveness_over_time(
     This data powers the trend line charts on the Effectiveness Analytics dashboard.
     """
     user_id = current_user.id
+
+    cache_key = f"analytics:over_time:{user_id}:{days}:{limit}:{offset}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     # Get study plans created over time
@@ -369,7 +395,7 @@ async def get_effectiveness_over_time(
     total_plans = len(plans_data)
     total_engagement = len(engagement_data)
 
-    return {
+    result = {
         "period_days": days,
         "study_plans_over_time": plans_data[offset:offset + limit],
         "engagement_over_time": engagement_data[offset:offset + limit],
@@ -377,6 +403,8 @@ async def get_effectiveness_over_time(
         "limit": limit,
         "offset": offset
     }
+    cache_set(cache_key, result, TTL_ANALYTICS)
+    return result
 
 
 @router.get(
@@ -405,7 +433,9 @@ async def get_effectiveness_over_time(
         401: {"description": "Missing or invalid JWT token."},
     },
 )
+@limiter.limit("30/minute")
 async def get_mood_effectiveness_correlation(
+    request: FastAPIRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -424,6 +454,11 @@ async def get_mood_effectiveness_correlation(
     This data supports the insight: *"You improve most when studying in a focused mood."*
     """
     user_id = current_user.id
+
+    cache_key = f"analytics:mood_correlation:{user_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
 
     # Get mood logs with nearby study plan completions
     mood_logs = db.query(MoodLog).filter(
@@ -475,10 +510,12 @@ async def get_mood_effectiveness_correlation(
             mood_effectiveness[mood]["total_improvement"] / count if count > 0 else 0, 2
         )
 
-    return {
+    result = {
         "mood_distribution": mood_stats,
         "effectiveness_by_mood": mood_effectiveness
     }
+    cache_set(cache_key, result, TTL_ANALYTICS)
+    return result
 
 
 @router.get(
@@ -513,7 +550,9 @@ async def get_mood_effectiveness_correlation(
         401: {"description": "Missing or invalid JWT token."},
     },
 )
+@limiter.limit("30/minute")
 async def get_intervention_outcomes(
+    request: FastAPIRequest,
     limit: int = 20,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -535,23 +574,26 @@ async def get_intervention_outcomes(
     """
     user_id = current_user.id
 
-    outcomes = db.query(InterventionOutcome).filter(
+    cache_key = f"analytics:intervention_outcomes:{user_id}:{limit}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    outcomes = db.query(InterventionOutcome).options(
+        joinedload(InterventionOutcome.study_plan)
+    ).filter(
         InterventionOutcome.user_id == user_id
     ).order_by(InterventionOutcome.measured_at.desc()).limit(limit).all()
 
-    # Get related study plans for context
+    # Build result with eager-loaded study plan context
     result = []
     for outcome in outcomes:
         outcome_data = outcome.to_dict()
 
-        # Add study plan topic if available
-        if outcome.study_plan_id:
-            plan = db.query(StudyPlan).filter(
-                StudyPlan.id == outcome.study_plan_id
-            ).first()
-            if plan:
-                outcome_data["study_plan_topic"] = plan.topic
-                outcome_data["learning_style_used"] = plan.learning_style_used
+        # Add study plan topic if available (eager-loaded, no extra query)
+        if outcome.study_plan:
+            outcome_data["study_plan_topic"] = outcome.study_plan.topic
+            outcome_data["learning_style_used"] = outcome.study_plan.learning_style_used
 
         result.append(outcome_data)
 
@@ -562,7 +604,7 @@ async def get_intervention_outcomes(
         float(o.grade_improvement) for o in outcomes if o.grade_improvement
     ) / total_outcomes if total_outcomes > 0 else 0
 
-    return {
+    response = {
         "outcomes": result,
         "summary": {
             "total_outcomes": total_outcomes,
@@ -571,6 +613,8 @@ async def get_intervention_outcomes(
             "average_improvement": round(avg_improvement, 2)
         }
     }
+    cache_set(cache_key, response, TTL_ANALYTICS)
+    return response
 
 
 @router.get(
@@ -607,7 +651,9 @@ async def get_intervention_outcomes(
         401: {"description": "Missing or invalid JWT token."},
     },
 )
+@limiter.limit("30/minute")
 async def get_topic_effectiveness(
+    request: FastAPIRequest,
     limit: int = 20,
     offset: int = 0,
     current_user: User = Depends(get_current_user),
@@ -626,6 +672,11 @@ async def get_topic_effectiveness(
     their study interventions have been for each subject area.
     """
     user_id = current_user.id
+
+    cache_key = f"analytics:topics:{user_id}:{limit}:{offset}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
 
     # Aggregate by topic
     topic_stats = db.query(
@@ -653,12 +704,14 @@ async def get_topic_effectiveness(
 
     total = len(topics)
 
-    return {
+    result = {
         "topics": topics[offset:offset + limit],
         "total": total,
         "limit": limit,
         "offset": offset
     }
+    cache_set(cache_key, result, TTL_ANALYTICS)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -740,7 +793,9 @@ def _t_critical_two_tail(alpha: float, df: int) -> float:
     operation_id="get_statistical_analysis",
     summary="Research-grade statistical analysis of intervention effectiveness",
 )
+@limiter.limit("30/minute")
 async def get_statistical_analysis(
+    request: FastAPIRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -989,7 +1044,9 @@ async def get_statistical_analysis(
     operation_id="get_cost_analysis",
     summary="OpenAI API cost analysis and projections",
 )
+@limiter.limit("30/minute")
 async def get_cost_analysis(
+    request: FastAPIRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1003,6 +1060,11 @@ async def get_cost_analysis(
     Returns monthly and semester projections based on usage velocity.
     """
     user_id = current_user.id
+
+    cache_key = f"analytics:cost_analysis:{user_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
 
     # Total tokens used across all user messages
     total_tokens_row = (
@@ -1068,7 +1130,7 @@ async def get_cost_analysis(
     monthly_projection = (estimated_cost_usd / days_active) * 30
     semester_projection = monthly_projection * 4
 
-    return {
+    result = {
         "total_tokens": total_tokens,
         "total_messages": total_messages,
         "total_conversations": total_conversations,
@@ -1080,6 +1142,8 @@ async def get_cost_analysis(
         "monthly_projection": monthly_projection,
         "semester_projection": semester_projection,
     }
+    cache_set(cache_key, result, TTL_ANALYTICS)
+    return result
 
 
 @router.get(
@@ -1107,7 +1171,9 @@ async def get_cost_analysis(
         401: {"description": "Missing or invalid JWT token."},
     },
 )
+@limiter.limit("30/minute")
 async def get_usage_summary(
+    request: FastAPIRequest,
     days: int = 30,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1125,6 +1191,12 @@ async def get_usage_summary(
     - **average_response_time_ms** -- Mean response time across all requests in the period.
     """
     user_id = current_user.id
+
+    cache_key = f"analytics:usage_summary:{user_id}:{days}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     base_query = db.query(UsageLog).filter(
@@ -1163,9 +1235,11 @@ async def get_usage_summary(
     )
     average_response_time_ms = round(float(avg_response_time), 2) if avg_response_time else 0.0
 
-    return {
+    result = {
         "total_requests": total_requests,
         "daily_active_days": daily_active_days,
         "most_used_endpoints": most_used_endpoints,
         "average_response_time_ms": average_response_time_ms,
     }
+    cache_set(cache_key, result, TTL_ANALYTICS)
+    return result

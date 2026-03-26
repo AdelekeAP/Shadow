@@ -21,19 +21,19 @@ describe('CGPAProgressRing', () => {
   it('applies green color when on track (>=90% of target)', () => {
     render(<CGPAProgressRing currentCGPA={4.2} targetCGPA={4.5} />);
     const progress = screen.getByTestId('cgpa-ring-progress');
-    expect(progress.getAttribute('stroke')).toBe('#10b981');
+    expect(progress.getAttribute('stroke')).toBe('#059669');
   });
 
   it('applies amber color when close (75-89% of target)', () => {
     render(<CGPAProgressRing currentCGPA={3.5} targetCGPA={4.5} />);
     const progress = screen.getByTestId('cgpa-ring-progress');
-    expect(progress.getAttribute('stroke')).toBe('#f59e0b');
+    expect(progress.getAttribute('stroke')).toBe('#d97706');
   });
 
   it('applies red color when behind (<75% of target)', () => {
     render(<CGPAProgressRing currentCGPA={2.0} targetCGPA={4.5} />);
     const progress = screen.getByTestId('cgpa-ring-progress');
-    expect(progress.getAttribute('stroke')).toBe('#ef4444');
+    expect(progress.getAttribute('stroke')).toBe('#dc2626');
   });
 
   it('handles zero CGPA', () => {
@@ -45,6 +45,6 @@ describe('CGPAProgressRing', () => {
     render(<CGPAProgressRing currentCGPA={5.0} targetCGPA={5.0} />);
     expect(screen.getByText('5.00')).toBeTruthy();
     const progress = screen.getByTestId('cgpa-ring-progress');
-    expect(progress.getAttribute('stroke')).toBe('#10b981');
+    expect(progress.getAttribute('stroke')).toBe('#059669');
   });
 });

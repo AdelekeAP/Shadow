@@ -33,7 +33,7 @@ class NotificationPriorityEnum(str, Enum):
 class NotificationBase(BaseModel):
     """Base notification fields"""
     title: str = Field(..., min_length=1, max_length=255)
-    message: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1, max_length=1000)
     notification_type: NotificationTypeEnum = NotificationTypeEnum.SYSTEM
     priority: NotificationPriorityEnum = NotificationPriorityEnum.MEDIUM
 
@@ -192,7 +192,7 @@ class ScheduledReminderCreate(BaseModel):
     recurrence_pattern: Optional[str] = None
     recurrence_data: Optional[Dict[str, Any]] = None
     custom_title: Optional[str] = Field(None, max_length=255)
-    custom_message: Optional[str] = None
+    custom_message: Optional[str] = Field(None, max_length=500)
 
 
 class ScheduledReminderUpdate(BaseModel):
@@ -203,7 +203,7 @@ class ScheduledReminderUpdate(BaseModel):
     recurrence_data: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     custom_title: Optional[str] = Field(None, max_length=255)
-    custom_message: Optional[str] = None
+    custom_message: Optional[str] = Field(None, max_length=500)
 
 
 class ScheduledReminderResponse(BaseModel):

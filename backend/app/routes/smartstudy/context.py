@@ -65,10 +65,10 @@ async def get_student_context(
         return result
 
     except Exception as e:
-        logger.error(f"Error in get_student_context: {e}")
+        logger.error(f"Error in get_student_context: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to load student context"
         )
 
 
@@ -90,10 +90,10 @@ async def get_suggested_chat_prompts(
         return [SmartStudySuggestedPrompt(**p) for p in prompts]
 
     except Exception as e:
-        logger.error(f"Error in get_suggested_chat_prompts: {e}")
+        logger.error(f"Error in get_suggested_chat_prompts: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to get suggested prompts"
         )
 
 
@@ -115,10 +115,10 @@ async def get_smartstudy_triggers(
         return trigger_data
 
     except Exception as e:
-        logger.error(f"Error in get_smartstudy_triggers: {e}")
+        logger.error(f"Error in get_smartstudy_triggers: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to check SmartStudy triggers"
         )
 
 
@@ -158,8 +158,8 @@ async def check_dashboard_trigger(
         )
 
     except Exception as e:
-        logger.error(f"Error in check_dashboard_trigger: {e}")
+        logger.error(f"Error in check_dashboard_trigger: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to check dashboard trigger"
         )

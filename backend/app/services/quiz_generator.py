@@ -2,6 +2,7 @@
 Quiz Generator Service - AI-Powered Knowledge Testing
 Generates quizzes from topics or document content using GPT-4
 """
+import asyncio
 import json
 import logging
 import re
@@ -133,7 +134,7 @@ def parse_quiz_json(response_text: str) -> dict:
     return data
 
 
-def generate_quiz(
+async def generate_quiz(
     db: Session,
     user_id: str,
     topic: str,
@@ -160,11 +161,19 @@ def generate_quiz(
     ).order_by(Quiz.created_at.desc()).first()
 
     if existing_quiz:
-        logger.info(f"Returning existing quiz {existing_quiz.id} (duplicate within 24h)")
-        result = existing_quiz.to_dict(include_answers=False)
-        result["tokens_used"] = 0
-        result["reused"] = True
-        return result
+        # Check if the existing quiz still has attempts remaining
+        attempt_count = db.query(QuizAttempt).filter(
+            QuizAttempt.quiz_id == existing_quiz.id,
+            QuizAttempt.user_id == existing_quiz.user_id,
+        ).count()
+        if attempt_count < 5:
+            logger.info(f"Returning existing quiz {existing_quiz.id} (duplicate within 24h, {attempt_count}/5 attempts used)")
+            result = existing_quiz.to_dict(include_answers=False)
+            result["tokens_used"] = 0
+            result["reused"] = True
+            return result
+        else:
+            logger.info(f"Existing quiz {existing_quiz.id} exhausted ({attempt_count}/5 attempts), generating new quiz")
 
     # Determine source type
     source_type = "topic"
@@ -190,7 +199,8 @@ def generate_quiz(
     logger.info(f"Generating {quiz_type} quiz: {question_count} questions on '{topic}'")
 
     try:
-        response = call_with_retry(
+        response = await asyncio.to_thread(
+            call_with_retry,
             messages=[
                 {"role": "system", "content": "You are an expert academic quiz generator. Return ONLY valid JSON."},
                 {"role": "user", "content": prompt}
@@ -241,7 +251,7 @@ def generate_quiz(
     return result
 
 
-def grade_quiz(
+async def grade_quiz(
     db: Session,
     user_id: str,
     quiz_id: str,
@@ -258,7 +268,8 @@ def grade_quiz(
         raise ValueError("Quiz not found")
 
     questions = quiz.questions
-    question_map = {q["id"]: q for q in questions}
+    # Coerce all question IDs to int for consistent lookup
+    question_map = {int(q["id"]): q for q in questions}
 
     graded_answers = []
     correct_count = 0
@@ -267,7 +278,7 @@ def grade_quiz(
     # Collect short-answer items for batch grading
     short_answer_items = []
     for answer in answers:
-        q_id = answer.get("question_id")
+        q_id = int(answer.get("question_id"))
         user_answer = answer.get("user_answer", "").strip()
         question = question_map.get(q_id)
         if question and question["type"] == "short_answer" and user_answer:
@@ -279,10 +290,14 @@ def grade_quiz(
             })
 
     # Batch grade all short answers in one GPT call
-    sa_verdicts = batch_grade_short_answers(short_answer_items) if short_answer_items else {}
+    try:
+        sa_verdicts = await batch_grade_short_answers(short_answer_items) if short_answer_items else {}
+    except Exception as e:
+        logger.warning(f"Batch grading failed entirely, marking short answers as incorrect: {e}")
+        sa_verdicts = {}
 
     for answer in answers:
-        q_id = answer.get("question_id")
+        q_id = int(answer.get("question_id"))
         user_answer = answer.get("user_answer", "").strip()
         question = question_map.get(q_id)
 
@@ -347,7 +362,7 @@ def grade_quiz(
     return attempt.to_dict()
 
 
-def batch_grade_short_answers(items: List[Dict[str, str]]) -> Dict[int, bool]:
+async def batch_grade_short_answers(items: List[Dict[str, str]]) -> Dict[int, bool]:
     """
     Grade multiple short-answer questions in a single GPT call.
 
@@ -379,7 +394,8 @@ def batch_grade_short_answers(items: List[Dict[str, str]]) -> Dict[int, bool]:
     )
 
     try:
-        response = call_with_retry(
+        response = await asyncio.to_thread(
+            call_with_retry,
             messages=[
                 {"role": "system", "content": "You are a strict academic grader. Return ONLY valid JSON."},
                 {"role": "user", "content": batch_prompt},
@@ -404,19 +420,20 @@ def batch_grade_short_answers(items: List[Dict[str, str]]) -> Dict[int, bool]:
         # Fallback to individual grading
         results = {}
         for item in items:
-            results[item["id"]] = grade_short_answer(
+            results[item["id"]] = await grade_short_answer(
                 item["question"], item["user_answer"], item["correct_answer"]
             )
         return results
 
 
-def grade_short_answer(question: str, user_answer: str, correct_answer: str) -> bool:
+async def grade_short_answer(question: str, user_answer: str, correct_answer: str) -> bool:
     client = get_openai_client()
     if not client or not user_answer:
         return False
 
     try:
-        response = call_with_retry(
+        response = await asyncio.to_thread(
+            call_with_retry,
             messages=[
                 {"role": "system", "content": "You are a strict academic grader. Return ONLY 'CORRECT' or 'INCORRECT'."},
                 {"role": "user", "content": f"Question: {question}\nExpected answer: {correct_answer}\nStudent answer: {user_answer}\n\nIs the student's answer substantially correct? Reply ONLY with CORRECT or INCORRECT."}

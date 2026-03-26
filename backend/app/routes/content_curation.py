@@ -2,7 +2,7 @@
 Content Curation API Routes
 Endpoints for accessing YouTube and Reddit curated learning resources
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 import logging
@@ -11,6 +11,7 @@ from app.database import get_db
 from app.utils.auth import get_current_user
 from app.models.user import User
 from app.services.content_curator import get_content_curator
+from app.middleware.rate_limiter import limiter
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,10 @@ class CurateResourcesRequest(BaseModel):
     operation_id="curate_resources",
     summary="Curate learning resources for a topic",
 )
+@limiter.limit("10/minute")
 async def curate_resources(
-    request: CurateResourcesRequest,
+    request: Request,
+    body: CurateResourcesRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -41,7 +44,7 @@ async def curate_resources(
     Combines YouTube videos and Reddit recommendations
 
     Args:
-        request: Curation request with topic and preferences
+        body: Curation request with topic and preferences
         current_user: Authenticated user
         db: Database session
 
@@ -49,16 +52,16 @@ async def curate_resources(
         Curated resources categorized by type and adapted to learning style
     """
     try:
-        logger.info(f"🔍 User {current_user.email} requesting curation for: {request.topic}")
+        logger.info(f"User {current_user.id} requesting curation for: {body.topic}")
 
         curator = get_content_curator()
 
         # Curate resources
         results = curator.curate_resources(
-            topic=request.topic,
-            learning_style=request.learning_style,
-            max_results=request.max_results,
-            min_quality_score=request.min_quality_score
+            topic=body.topic,
+            learning_style=body.learning_style,
+            max_results=body.max_results,
+            min_quality_score=body.min_quality_score
         )
 
         return {
@@ -67,10 +70,10 @@ async def curate_resources(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error curating resources: {e}")
+        logger.error(f"Error curating resources: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to curate resources: {str(e)}"
+            detail="Failed to curate resources"
         )
 
 
@@ -79,7 +82,9 @@ async def curate_resources(
     operation_id="search_resources",
     summary="Search resources across platforms",
 )
+@limiter.limit("20/minute")
 async def search_resources(
+    request: Request,
     query: str = Query(..., description="Search query"),
     resource_type: str = Query("all", description="youtube, reddit, or all"),
     current_user: User = Depends(get_current_user)
@@ -96,7 +101,7 @@ async def search_resources(
         List of matching resources
     """
     try:
-        logger.info(f"🔍 User {current_user.email} searching for: {query} (type: {resource_type})")
+        logger.info(f"User {current_user.id} searching for: {query} (type: {resource_type})")
 
         curator = get_content_curator()
 
@@ -115,10 +120,10 @@ async def search_resources(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error searching resources: {e}")
+        logger.error(f"Error searching resources: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Search failed: {str(e)}"
+            detail="Failed to search resources"
         )
 
 
@@ -142,7 +147,7 @@ async def get_resource_summary(
         Summary with counts and top recommendations
     """
     try:
-        logger.info(f"📊 User {current_user.email} requesting summary for: {topic}")
+        logger.info(f"User {current_user.id} requesting summary for: {topic}")
 
         curator = get_content_curator()
 
@@ -155,10 +160,10 @@ async def get_resource_summary(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error getting resource summary: {e}")
+        logger.error(f"Error getting resource summary: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get summary: {str(e)}"
+            detail="Failed to get resource summary"
         )
 
 
@@ -186,7 +191,7 @@ async def search_youtube_videos(
         List of YouTube video metadata
     """
     try:
-        logger.info(f"🎥 User {current_user.email} searching YouTube for: {topic}")
+        logger.info(f"User {current_user.id} searching YouTube for: {topic}")
 
         curator = get_content_curator()
 
@@ -205,10 +210,10 @@ async def search_youtube_videos(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error searching YouTube: {e}")
+        logger.error(f"Error searching YouTube: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"YouTube search failed: {str(e)}"
+            detail="Failed to search YouTube"
         )
 
 
@@ -236,7 +241,7 @@ async def get_curated_youtube_videos(
         List of curated YouTube videos with quality scores
     """
     try:
-        logger.info(f"✨ User {current_user.email} requesting curated YouTube videos for: {topic}")
+        logger.info(f"User {current_user.id} requesting curated YouTube videos for: {topic}")
 
         curator = get_content_curator()
 
@@ -255,10 +260,10 @@ async def get_curated_youtube_videos(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error getting curated YouTube videos: {e}")
+        logger.error(f"Error getting curated YouTube videos: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get curated videos: {str(e)}"
+            detail="Failed to get curated videos"
         )
 
 
@@ -286,7 +291,7 @@ async def get_reddit_resources(
         List of Reddit-recommended resources
     """
     try:
-        logger.info(f"📱 User {current_user.email} requesting Reddit resources for: {topic}")
+        logger.info(f"User {current_user.id} requesting Reddit resources for: {topic}")
 
         curator = get_content_curator()
 
@@ -305,10 +310,10 @@ async def get_reddit_resources(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error getting Reddit resources: {e}")
+        logger.error(f"Error getting Reddit resources: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get Reddit resources: {str(e)}"
+            detail="Failed to get Reddit resources"
         )
 
 
@@ -332,7 +337,7 @@ async def get_community_consensus(
         Community consensus data with top recommendations
     """
     try:
-        logger.info(f"🤝 User {current_user.email} requesting community consensus for: {topic}")
+        logger.info(f"User {current_user.id} requesting community consensus for: {topic}")
 
         curator = get_content_curator()
 
@@ -345,10 +350,10 @@ async def get_community_consensus(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error getting community consensus: {e}")
+        logger.error(f"Error getting community consensus: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get consensus: {str(e)}"
+            detail="Failed to get community consensus"
         )
 
 
@@ -385,8 +390,8 @@ async def check_health():
         }
 
     except Exception as e:
-        logger.error(f"❌ Error checking service health: {e}")
+        logger.error(f"Error checking service health: {e}", exc_info=True)
         return {
             "success": False,
-            "error": str(e)
+            "error": "Service health check failed"
         }

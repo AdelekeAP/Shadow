@@ -65,14 +65,14 @@ class TestCalculateSemesterGPA:
         assert result["total_credits"] == 9
         assert result["quality_points"] == 36.0
 
-    def test_courses_with_zero_scores_excluded(self):
+    def test_courses_with_zero_scores_included_as_F(self):
         courses = [
-            {"credits": 3, "score": 75},  # Included
-            {"credits": 3, "score": 0},   # Excluded (score > 0 check)
+            {"credits": 3, "score": 75},  # A = 5.0, QP = 15
+            {"credits": 3, "score": 0},   # F = 0.0, QP = 0
         ]
         result = CGPACalculator.calculate_semester_gpa(courses)
-        assert result["gpa"] == 5.0
-        assert result["total_credits"] == 3
+        assert result["gpa"] == 2.5  # 15 / 6
+        assert result["total_credits"] == 6
 
     def test_empty_courses(self):
         result = CGPACalculator.calculate_semester_gpa([])

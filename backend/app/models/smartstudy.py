@@ -52,7 +52,7 @@ class ChatMessage(Base):
     role = Column(String(20), nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
     tokens_used = Column(Integer, nullable=True)  # For cost tracking
-    model_used = Column(String(50), nullable=True, default='gpt-4')
+    model_used = Column(String(50), nullable=True, default=None)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
@@ -140,6 +140,16 @@ class StudyPlan(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+
+    def to_summary_dict(self):
+        """Return dict for list endpoints, stripping bulky _slide_content from plan_data."""
+        result = self.to_dict()
+        if result.get("plan_data") and isinstance(result["plan_data"], dict):
+            result["plan_data"] = {
+                k: v for k, v in result["plan_data"].items()
+                if k != "_slide_content"
+            }
+        return result
 
 
 class StudyPlanResource(Base):
@@ -276,6 +286,9 @@ class InterventionOutcome(Base):
     student_mood_during = Column(String(50), nullable=True)
 
     measured_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    # Relationship for eager loading
+    study_plan = relationship("StudyPlan", foreign_keys=[study_plan_id], lazy="select")
 
     def __repr__(self):
         return f"<InterventionOutcome(id={self.id}, improvement={self.grade_improvement})>"

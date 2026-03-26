@@ -1,12 +1,116 @@
 """
 Resource Finder Service
-Finds documentation, articles, practice exercises, and learning resources for study plans
+Finds documentation, articles, practice exercises, and learning resources for study plans.
+
+Uses GPT-powered topic classification for dynamic resource matching instead of
+brittle keyword lists. Classification results are cached per topic.
 """
+import json
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# ── Topic Classification Cache ──
+# Avoids repeated GPT calls for the same topic within a session
+_classification_cache: Dict[str, Dict] = {}
+
+
+def classify_topic(topic: str) -> Dict:
+    """
+    Use GPT to dynamically classify a topic into resource categories.
+    Cached per topic string to avoid redundant calls.
+
+    Returns:
+        {
+            "category": "coding" | "web" | "algorithms" | ... | "general",
+            "language": "python" | "javascript" | ... | null,
+            "search_terms": ["term1", "term2", ...],
+            "related_categories": ["cat1", "cat2"]
+        }
+    """
+    cache_key = topic.lower().strip()
+    if cache_key in _classification_cache:
+        return _classification_cache[cache_key]
+
+    try:
+        from app.services.openai_client import call_with_retry
+
+        response = call_with_retry(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You classify academic topics for resource matching. "
+                        "Return ONLY valid JSON, no markdown."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"""Classify this academic topic: "{topic}"
+
+Return JSON with:
+- "category": primary category, one of: "coding", "web", "algorithms", "database", "math", "science", "business", "humanities", "engineering", "design", "general"
+- "language": if programming-related, the primary language (e.g., "python", "javascript", "java", "cpp", "sql", "r"). null if not code-focused.
+- "search_terms": 3-5 specific terms for finding practice resources (e.g., for "Machine Learning" → ["machine learning exercises", "scikit-learn practice", "ML algorithms implementation"])
+- "related_categories": 1-2 secondary categories that also apply (e.g., "Machine Learning" → ["math", "coding"])
+
+Be smart: "Machine Learning" is "coding" (not "general"), "Data Structures" is "algorithms", "Linear Algebra" is "math", "React Hooks" is "web".""",
+                },
+            ],
+            models=["gpt-4o-mini"],  # Lightweight model — fast and cheap
+            temperature=0.0,
+            max_tokens=200,
+            timeout=10.0,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
+
+        result = json.loads(raw)
+
+        # Validate and normalize
+        valid_categories = {
+            "coding", "web", "algorithms", "database", "math",
+            "science", "business", "humanities", "engineering",
+            "design", "general",
+        }
+        if result.get("category") not in valid_categories:
+            result["category"] = "general"
+
+        classification = {
+            "category": result.get("category", "general"),
+            "language": result.get("language"),
+            "search_terms": result.get("search_terms", [topic])[:5],
+            "related_categories": [
+                c for c in result.get("related_categories", [])
+                if c in valid_categories
+            ][:2],
+        }
+
+        _classification_cache[cache_key] = classification
+        logger.info(
+            f"Topic '{topic}' classified as: {classification['category']} "
+            f"(lang={classification['language']}, related={classification['related_categories']})"
+        )
+        return classification
+
+    except Exception as e:
+        logger.warning(f"GPT topic classification failed for '{topic}': {e}")
+        # Graceful fallback — return general classification
+        fallback = {
+            "category": "general",
+            "language": None,
+            "search_terms": [topic],
+            "related_categories": [],
+        }
+        _classification_cache[cache_key] = fallback
+        return fallback
 
 
 class ResourceFinder:
@@ -138,7 +242,7 @@ class ResourceFinder:
                 {
                     'name': 'LeetCode',
                     'url': 'https://leetcode.com/problemset/',
-                    'search_url': 'https://leetcode.com/problemset/all/?search=',
+
                     'description': 'Practice coding problems and prepare for interviews',
                     'type': 'practice'
                 },
@@ -165,14 +269,14 @@ class ResourceFinder:
                 {
                     'name': 'CodePen',
                     'url': 'https://codepen.io/',
-                    'search_url': 'https://codepen.io/search/pens?q=',
+
                     'description': 'Online code editor for HTML/CSS/JS',
                     'type': 'sandbox'
                 },
                 {
                     'name': 'CodeSandbox',
                     'url': 'https://codesandbox.io/',
-                    'search_url': 'https://codesandbox.io/search?query=',
+
                     'description': 'Online IDE for web development',
                     'type': 'sandbox'
                 },
@@ -227,7 +331,7 @@ class ResourceFinder:
                 {
                     'name': 'Wolfram Alpha',
                     'url': 'https://www.wolframalpha.com/',
-                    'search_url': 'https://www.wolframalpha.com/input?i=',
+
                     'description': 'Computational knowledge engine for math problems',
                     'type': 'sandbox'
                 },
@@ -256,7 +360,7 @@ class ResourceFinder:
                 {
                     'name': 'Investopedia',
                     'url': 'https://www.investopedia.com/',
-                    'search_url': 'https://www.investopedia.com/search?q=',
+
                     'description': 'Financial education and business concepts',
                     'type': 'interactive'
                 },
@@ -291,19 +395,19 @@ class ResourceFinder:
                 'name': 'freeCodeCamp',
                 'url': 'https://www.freecodecamp.org/learn',
                 'description': 'Free coding bootcamp with certifications',
-                'topics': ['web', 'javascript', 'python', 'data science']
+                'topics': ['web', 'javascript', 'python', 'data science', 'machine learning']
             },
             {
                 'name': 'Codecademy',
                 'url': 'https://www.codecademy.com/catalog',
                 'description': 'Interactive coding courses',
-                'topics': ['web', 'python', 'javascript', 'sql', 'data science']
+                'topics': ['web', 'python', 'javascript', 'sql', 'data science', 'machine learning']
             },
             {
                 'name': 'Khan Academy',
                 'url': 'https://www.khanacademy.org/computing',
                 'description': 'Free courses on computing and programming',
-                'topics': ['algorithms', 'computer science', 'web']
+                'topics': ['algorithms', 'computer science', 'web', 'statistics']
             },
             {
                 'name': 'The Odin Project',
@@ -316,12 +420,19 @@ class ResourceFinder:
                 'url': 'https://scrimba.com/',
                 'description': 'Interactive video courses for coding',
                 'topics': ['web', 'react', 'javascript', 'css']
+            },
+            {
+                'name': 'Kaggle Learn',
+                'url': 'https://www.kaggle.com/learn',
+                'description': 'Hands-on data science and ML micro-courses with notebooks',
+                'topics': ['machine learning', 'deep learning', 'data science', 'python', 'sql', 'ai']
             }
         ]
 
     def find_documentation(self, topic: str) -> List[Dict]:
         """
-        Find official documentation and reference materials for a topic
+        Find official documentation and reference materials for a topic.
+        Uses GPT classification language hint for smarter doc matching.
 
         Args:
             topic: Learning topic (e.g., "React Hooks", "Python")
@@ -332,9 +443,13 @@ class ResourceFinder:
         resources = []
         topic_lower = topic.lower()
 
+        # Use GPT classification to also check for language-specific docs
+        classification = classify_topic(topic)
+        classified_lang = classification.get("language")
+
         # Check for exact or partial matches in documentation sources
         for key, docs in self.documentation_sources.items():
-            if key in topic_lower or topic_lower in key:
+            if key in topic_lower or topic_lower in key or key == classified_lang:
                 for doc_type, url in docs.items():
                     resources.append({
                         'type': 'documentation',
@@ -346,6 +461,28 @@ class ResourceFinder:
                     })
 
         # No fallback — return empty rather than a useless search-page URL
+
+        # Gap-fill: if hardcoded returned nothing, try Serper for quality docs
+        if not resources:
+            try:
+                from app.services.article_search_service import get_article_search_service
+                search_service = get_article_search_service()
+                if search_service.is_available:
+                    doc_results = search_service.search_and_validate(
+                        f"{topic} official documentation reference guide",
+                        count=3
+                    )
+                    for doc in doc_results:
+                        resources.append({
+                            'type': 'documentation',
+                            'title': doc.get('title', f'{topic} Documentation'),
+                            'url': doc['url'],
+                            'description': doc.get('description', f'Documentation for {topic}'),
+                            'quality_score': doc.get('quality_score', 75),
+                            'source': 'serper_docs'
+                        })
+            except Exception as e:
+                logger.debug(f"Serper doc search failed (non-critical): {e}")
 
         logger.info(f"Found {len(resources)} documentation resources for '{topic}'")
         return resources[:5]  # Limit to top 5
@@ -389,83 +526,80 @@ class ResourceFinder:
     def find_practice_resources(self, topic: str, category: str = 'coding') -> List[Dict]:
         """
         Find practice platforms and coding exercises.
-        Only returns resources for categories that genuinely match the topic.
+        Uses GPT-powered topic classification for dynamic category detection.
 
         Args:
             topic: Learning topic
-            category: Type of practice (coding, web, algorithms, database)
+            category: Type of practice (fallback if GPT unavailable)
 
         Returns:
             List of practice resources (empty for unmatched categories)
         """
         resources = []
         topic_lower = topic.lower()
-        encoded_topic = topic.replace(' ', '+')
 
-        # Determine category based on topic keywords
-        detected_category = None
-        if any(word in topic_lower for word in ['html', 'css', 'web', 'react', 'frontend', 'ui']):
-            detected_category = 'web'
-        elif any(word in topic_lower for word in ['algorithm', 'data structure', 'sorting', 'search']):
-            detected_category = 'algorithms'
-        elif any(word in topic_lower for word in ['sql', 'database', 'query', 'postgres', 'mysql']):
-            detected_category = 'database'
-        elif any(word in topic_lower for word in ['python', 'java', 'javascript', 'coding', 'programming', 'code']):
-            detected_category = 'coding'
-        elif any(word in topic_lower for word in ['math', 'calculus', 'algebra', 'statistics', 'probability', 'linear algebra', 'differential']):
-            detected_category = 'math'
-        elif any(word in topic_lower for word in ['physics', 'chemistry', 'biology', 'science', 'engineering', 'circuit']):
-            detected_category = 'science'
-        elif any(word in topic_lower for word in ['business', 'management', 'economics', 'finance', 'accounting', 'marketing']):
-            detected_category = 'business'
-        elif any(word in topic_lower for word in ['history', 'philosophy', 'literature', 'sociology', 'psychology', 'political', 'law']):
-            detected_category = 'humanities'
+        # Use GPT-powered classification for dynamic category detection
+        classification = classify_topic(topic)
+        detected_category = classification["category"]
 
-        # If no category matched, return empty — don't send students to CodePen for "NLP"
-        if detected_category is None:
-            logger.info(f"No matching practice category for '{topic}', returning empty")
+        # "general" means no specific practice platforms match
+        if detected_category == "general":
+            logger.info(f"Topic '{topic}' classified as general — no specific practice platforms")
             return []
 
         category = detected_category
 
-        # Get platforms for the matched category
-        platforms = self.practice_platforms.get(category, [])
+        # Get platforms for the primary + related categories
+        related = classification.get("related_categories", [])
+        platforms = list(self.practice_platforms.get(category, []))
+        seen_names = {p['name'] for p in platforms}
+        for rel_cat in related:
+            for p in self.practice_platforms.get(rel_cat, []):
+                if p['name'] not in seen_names:
+                    platforms.append(p)
+                    seen_names.add(p['name'])
 
         for platform in platforms:
             resource = {
                 'type': 'practice',
-                'title': f'Practice {topic} on {platform["name"]}',
-                'url': platform.get('search_url', platform['url']),
-                'description': platform['description'],
-                'quality_score': 80,
+                'title': f'{platform["name"]} — {topic}',
+                'url': platform['url'],  # Use landing page, not search URL
+                'description': f'{platform["description"]}. Search for "{topic}" on the platform to find relevant exercises.',
+                'quality_score': 75,
                 'source': platform['name'].lower(),
                 'platform_type': platform.get('type', 'practice')
             }
-
-            # Add topic to search URL if available
-            if 'search_url' in platform:
-                resource['url'] = f'{platform["search_url"]}{encoded_topic}'
-
             resources.append(resource)
 
-        # Add LeetCode for specific algorithm topics
-        if category == 'algorithms' or any(word in topic_lower for word in ['array', 'string', 'tree', 'graph', 'dynamic']):
-            resources.insert(0, {
-                'type': 'practice',
-                'title': f'LeetCode - {topic} Problems',
-                'url': f'https://leetcode.com/problemset/all/?search={encoded_topic}',
-                'description': 'Practice coding problems on LeetCode',
-                'quality_score': 88,
-                'source': 'leetcode',
-                'platform_type': 'practice'
-            })
+        # Try to find REAL practice resources via Serper for better quality
+        try:
+            from app.services.article_search_service import get_article_search_service
+            search_service = get_article_search_service()
+            if search_service.is_available:
+                practice_articles = search_service.search_and_validate(
+                    f"{topic} practice problems exercises tutorial",
+                    count=3
+                )
+                for article in practice_articles:
+                    resources.insert(0, {
+                        'type': 'practice',
+                        'title': article.get('title', f'{topic} Practice'),
+                        'url': article['url'],
+                        'description': article.get('description', f'Practice exercises for {topic}'),
+                        'quality_score': 85,
+                        'source': 'search',
+                        'platform_type': 'practice'
+                    })
+        except Exception as e:
+            logger.debug(f"Serper practice search failed (non-critical): {e}")
 
         logger.info(f"Found {len(resources)} practice resources for '{topic}'")
         return resources[:5]
 
     def find_interactive_tutorials(self, topic: str) -> List[Dict]:
         """
-        Find interactive learning platforms and courses
+        Find interactive learning platforms and courses.
+        Uses GPT classification to match platforms more intelligently.
 
         Args:
             topic: Learning topic
@@ -476,12 +610,24 @@ class ResourceFinder:
         resources = []
         topic_lower = topic.lower()
 
+        # Use GPT classification for smarter matching
+        classification = classify_topic(topic)
+        category = classification["category"]
+        related = classification.get("related_categories", [])
+        all_categories = [category] + related
+
         for platform in self.learning_platforms:
-            # Check if platform covers the topic
+            # Match via: direct topic keyword OR category overlap
             topic_match = any(t in topic_lower for t in platform['topics']) or \
                          any(topic_lower in t for t in platform['topics'])
 
-            if topic_match:
+            # Also match if platform topics overlap with classified categories
+            category_match = any(
+                cat in platform['topics'] or any(cat in t for t in platform['topics'])
+                for cat in all_categories
+            )
+
+            if topic_match or category_match:
                 resources.append({
                     'type': 'interactive',
                     'title': f'Learn {topic} on {platform["name"]}',
@@ -492,26 +638,27 @@ class ResourceFinder:
                     'platform_type': 'course'
                 })
 
-        # Add topic-specific interactive resources
-        if 'react' in topic_lower:
-            resources.insert(0, {
-                'type': 'interactive',
-                'title': 'React Tutorial - Tic-Tac-Toe',
-                'url': 'https://react.dev/learn/tutorial-tic-tac-toe',
-                'description': 'Official React interactive tutorial',
-                'quality_score': 95,
-                'source': 'official'
-            })
-
-        if any(word in topic_lower for word in ['algorithm', 'data structure']):
-            resources.insert(0, {
-                'type': 'interactive',
-                'title': 'VisuAlgo - Algorithm Visualizations',
-                'url': 'https://visualgo.net/',
-                'description': 'Visualize data structures and algorithms',
-                'quality_score': 90,
-                'source': 'visualgo'
-            })
+        # Gap-fill: if no interactive tutorials matched, try Serper
+        if not resources:
+            try:
+                from app.services.article_search_service import get_article_search_service
+                search_service = get_article_search_service()
+                if search_service.is_available:
+                    interactive_results = search_service.search_and_validate(
+                        f"{topic} interactive tutorial learn online course",
+                        count=3
+                    )
+                    for item in interactive_results:
+                        resources.append({
+                            'type': 'interactive',
+                            'title': item.get('title', f'Learn {topic}'),
+                            'url': item['url'],
+                            'description': item.get('description', f'Interactive learning for {topic}'),
+                            'quality_score': item.get('quality_score', 75),
+                            'source': 'serper_interactive'
+                        })
+            except Exception as e:
+                logger.debug(f"Serper interactive search failed (non-critical): {e}")
 
         logger.info(f"Found {len(resources)} interactive resources for '{topic}'")
         return resources[:5]
@@ -592,7 +739,8 @@ class ResourceFinder:
         topic: str,
         resource_types: List[str] = None,
         max_per_type: int = 3,
-        db=None
+        db=None,
+        subtopics: List[str] = None
     ) -> Dict[str, List[Dict]]:
         """
         Find all types of resources for a topic
@@ -602,6 +750,7 @@ class ResourceFinder:
             resource_types: List of types to include (documentation, articles, practice, interactive, github)
             max_per_type: Maximum resources per type
             db: Optional database session for article caching
+            subtopics: Specific subtopics for more targeted searches
 
         Returns:
             Dictionary with resources organized by type
@@ -619,7 +768,17 @@ class ResourceFinder:
             results['resources']['documentation'] = self.find_documentation(topic)[:max_per_type]
 
         if 'articles' in resource_types:
-            results['resources']['articles'] = self.find_articles(topic, db=db)[:max_per_type]
+            articles = self.find_articles(topic, db=db)
+            # Also search for specific subtopics to get more targeted articles
+            if subtopics and len(articles) < max_per_type:
+                seen_urls = {a['url'] for a in articles}
+                for subtopic in subtopics[:2]:  # Search top 2 subtopics
+                    extra = self.find_articles(f"{topic} {subtopic}", db=db)
+                    for a in extra:
+                        if a['url'] not in seen_urls:
+                            articles.append(a)
+                            seen_urls.add(a['url'])
+            results['resources']['articles'] = articles[:max_per_type]
 
         if 'practice' in resource_types:
             results['resources']['practice'] = self.find_practice_resources(topic)[:max_per_type]

@@ -4,7 +4,7 @@ CGPA Calculator - Handles all CGPA-related calculations
 import math
 from collections import defaultdict
 from typing import List, Dict, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models.course import Course, UserCourse, Semester
 from app.models.task import Task
 from app.utils.pau_grading import PAUGradingSystem
@@ -55,7 +55,7 @@ class CGPACalculator:
             if not math.isfinite(score) or score < 0 or score > 100:
                 raise ValueError(f"Score must be between 0 and 100, got {score}")
 
-            if score > 0 and credits > 0:  # Only include courses with valid scores and credits
+            if credits > 0 and score is not None:  # Include all courses with valid credits (score 0 = grade F)
                 grade_point = CGPACalculator.calculate_course_gpa(score)
                 quality_points = grade_point * credits
 
@@ -222,8 +222,11 @@ class CGPACalculator:
         user = db.query(User).filter(User.id == user_id).first()
         user_target_cgpa = float(user.target_cgpa) if user and user.target_cgpa else 4.5
 
-        # Get all user's enrolled courses with semester data
-        user_courses = db.query(UserCourse).filter(UserCourse.user_id == user_id).all()
+        # Get all user's enrolled courses with semester and course data (eager-loaded)
+        user_courses = db.query(UserCourse).options(
+            joinedload(UserCourse.semester),
+            joinedload(UserCourse.course)
+        ).filter(UserCourse.user_id == user_id).all()
 
         # Batch-fetch ALL tasks for this user's courses (fixes N+1 query)
         user_course_ids = [uc.id for uc in user_courses]
@@ -278,7 +281,7 @@ class CGPACalculator:
                 'name': user_course.course.title if user_course.course else 'Unknown Course',
                 'credits': max(credits, 0),
                 'score': max(min(current_score, 100), 0),
-                'grade': PAUGradingSystem.get_letter_grade(current_score) if current_score > 0 else 'N/A',
+                'grade': PAUGradingSystem.get_letter_grade(current_score) if current_score is not None else 'N/A',
                 'grade_point': CGPACalculator.calculate_course_gpa(current_score)
             })
 

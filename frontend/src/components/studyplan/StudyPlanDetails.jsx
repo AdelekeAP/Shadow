@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { linkifyText, getActivityIcon, getDifficultyColor } from './studyPlanHelpers.jsx'
 import ResourceCard from './ResourceCard'
 import AudioPlayer from './AudioPlayer'
 import ConceptDiagram from './ConceptDiagram'
-import { generateConceptDiagram } from '../../services/api'
+import PracticeExercise from './PracticeExercise'
+import StudyCards from './StudyCards'
+import ErrorBoundary from '../ErrorBoundary'
+import { generateConceptDiagram, generateSectionQuiz } from '../../services/api'
+import { friendlyError } from '../../utils/errors'
+
+const SlideRangeViewer = lazy(() => import('./SlideRangeViewer'))
 
 /* ─── SVG Icons ─── */
 const TargetIcon = ({ className }) => (
@@ -32,7 +38,7 @@ const PrinterIcon = ({ className }) => (
   </svg>
 )
 
-export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onSubmitBeforeScore, onSubmitAfterScore, onTakeQuiz }) {
+export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onSubmitBeforeScore, onSubmitAfterScore, onTakeQuiz, quizActive }) {
   const planData = plan.plan_data || {}
   const days = planData.days || []
   const completedDays = plan.completed_days || []
@@ -45,8 +51,22 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
   const [confirmUnmark, setConfirmUnmark] = useState(null)
   const [dayDiagrams, setDayDiagrams] = useState({})
   const [loadingDiagram, setLoadingDiagram] = useState(null)
+  const [sectionQuizLoading, setSectionQuizLoading] = useState(null) // tracks "dayNum-actIdx"
+  const [activeSlideViewer, setActiveSlideViewer] = useState(null) // tracks "dayNum-actIdx" for inline viewer
+  const [slidesUnlocked, setSlidesUnlocked] = useState(false) // quiz soft lock override
+  const [sectionQuizError, setSectionQuizError] = useState(null) // "dayNum-actIdx" → error msg
+  const [diagramError, setDiagramError] = useState(null)
 
-  const isVisualPlan = planData.learning_style_used === 'visual'
+  // Re-lock slides when a new quiz starts
+  useEffect(() => {
+    if (quizActive) setSlidesUnlocked(false)
+  }, [quizActive])
+
+  const isVisualPlan = (plan.learning_style_used || planData.learning_style_used) === 'visual'
+  const isAudioPlan = (plan.learning_style_used || planData.learning_style_used) === 'audio'
+  const isKinestheticPlan = (plan.learning_style_used || planData.learning_style_used) === 'kinesthetic'
+  const isReadingPlan = (plan.learning_style_used || planData.learning_style_used) === 'reading'
+  const hasSlideContent = !!(planData._slide_content)
 
   const handleLoadDiagram = async (dayNumber, topic) => {
     if (dayDiagrams[dayNumber]) {
@@ -60,6 +80,8 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
       setDayDiagrams(prev => ({ ...prev, [dayNumber]: result }))
     } catch (err) {
       console.error('Failed to generate diagram for day', dayNumber, err)
+      setDiagramError(friendlyError(err))
+      setTimeout(() => setDiagramError(null), 6000)
     } finally {
       setLoadingDiagram(null)
     }
@@ -182,6 +204,17 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
           <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-surface-100 text-surface-400 capitalize">{planData.difficulty_level || 'Intermediate'}</span>
           <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-600">{planData.estimated_hours_total || '12-16 hours'}</span>
           <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-amber-50 text-amber-600">{Math.round(plan.completion_percentage || 0)}% complete</span>
+          {plan.learning_style_used && plan.learning_style_used !== 'auto' && (
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+              plan.learning_style_used === 'visual' ? 'bg-indigo-100 text-indigo-700' :
+              plan.learning_style_used === 'audio' ? 'bg-amber-100 text-amber-700' :
+              plan.learning_style_used === 'reading' ? 'bg-emerald-100 text-emerald-700' :
+              plan.learning_style_used === 'kinesthetic' ? 'bg-violet-100 text-violet-700' :
+              'bg-slate-100 text-slate-700'
+            }`}>
+              {plan.learning_style_used === 'kinesthetic' ? 'hands-on' : plan.learning_style_used} learner
+            </span>
+          )}
         </div>
 
         {/* Learning Objectives */}
@@ -205,6 +238,44 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
         )}
       </div>
 
+      {/* ─── Slide Grounding Warning ─── */}
+      {planData._slide_grounding && !planData._slide_grounding.grounded && (
+        <div className="relative bg-gradient-to-r from-amber-50/80 to-orange-50/40 border border-amber-200/60 rounded-2xl p-5 mb-6 overflow-hidden animate-fade-up-0">
+          {/* Subtle atmospheric gradient */}
+          <div className="absolute top-0 right-0 w-32 h-32 pointer-events-none opacity-30" style={{ background: 'radial-gradient(ellipse at 100% 0%, rgba(245, 158, 11, 0.15), transparent 70%)' }} />
+          <div className="relative flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-amber-100 border border-amber-200/60 flex items-center justify-center flex-shrink-0 shadow-sm">
+              <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2.5 mb-1.5">
+                <p className="text-[13px] font-bold text-amber-900">Low Slide Grounding</p>
+                <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg bg-amber-200/60 text-amber-700">
+                  {Math.round((planData._slide_grounding.score || 0) * 100)}%
+                </span>
+              </div>
+              <p className="text-[12px] text-amber-700/80 leading-relaxed">
+                {planData._slide_grounding.grounding_warning || 'Some activities may use general knowledge instead of your specific uploaded material.'}
+              </p>
+              {/* Mini progress bar showing grounding */}
+              <div className="mt-3 flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-amber-200/50 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-amber-400 to-amber-500"
+                    style={{ width: `${Math.round((planData._slide_grounding.score || 0) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-amber-600 font-semibold">
+                  {planData._slide_grounding.grounded_count || 0}/{planData._slide_grounding.total_count || 0} grounded
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ─── Day-by-Day Breakdown ─── */}
       <div className="relative pl-10 sm:pl-12">
         {/* Timeline vertical line */}
@@ -214,6 +285,7 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
         {days.map((day, idx) => {
           const isCompleted = completedDays.includes(day.day_number)
           const prevCompleted = idx > 0 && completedDays.includes(days[idx - 1].day_number)
+          let audioCountForDay = 0 // Track audio activities to route first → ElevenLabs
 
           return (
             <div key={idx} className="relative">
@@ -322,6 +394,9 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
                       {dayDiagrams[day.day_number] ? 'Hide Diagram' : 'View Diagram'}
                     </button>
                   )}
+                  {diagramError && loadingDiagram === null && (
+                    <span className="ml-2 text-[11px] text-red-500 font-medium animate-fade-up-0">{diagramError}</span>
+                  )}
                 </div>
               </div>
 
@@ -376,6 +451,98 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
 
                         <p className="text-[12px] text-surface-400 leading-relaxed mb-2">{linkifyText(activity.description)}</p>
 
+                        {/* Page Range Badge + Slide Viewer */}
+                        {activity.page_range && hasSlideContent && (() => {
+                          const viewerKey = `${day.day_number}-${actIdx}`
+                          const isViewerOpen = activeSlideViewer === viewerKey
+                          // Find uploaded_slides resource URL for this plan
+                          const slideResource = resources.find(r => r.resource_type === 'uploaded_slides' && r.resource_url)
+                          const API_BASE = import.meta.env.VITE_API_URL || ''
+                          const docUrl = slideResource?.resource_url
+                            ? (slideResource.resource_url.startsWith('http') ? slideResource.resource_url : `${API_BASE}${slideResource.resource_url}`)
+                            : null
+
+                          return (
+                            <div className="mb-2">
+                              <button
+                                onClick={() => setActiveSlideViewer(isViewerOpen ? null : viewerKey)}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all border shadow-sm active:scale-[0.97] ${
+                                  isViewerOpen
+                                    ? 'bg-navy-800 text-white border-navy-800 shadow-navy-900/20'
+                                    : 'bg-gradient-to-r from-navy-50 to-surface-50 text-navy-700 border-navy-200/50 hover:border-navy-300/60 hover:shadow-md hover:shadow-navy-900/5'
+                                }`}
+                              >
+                                <svg className={`w-3.5 h-3.5 ${isViewerOpen ? 'text-white/80' : 'text-navy-500'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                </svg>
+                                <span>Pages {activity.page_range}</span>
+                                {isViewerOpen && (
+                                  <svg className="w-3 h-3 ml-0.5 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
+                                )}
+                              </button>
+                              {isViewerOpen && docUrl && (
+                                <div className="mt-2 relative">
+                                  {/* Quiz soft lock overlay */}
+                                  {quizActive && !slidesUnlocked && (
+                                    <div className="absolute inset-0 z-20 rounded-2xl overflow-hidden animate-fade-up-0">
+                                      {/* Frosted glass background */}
+                                      <div className="absolute inset-0 bg-navy-950/60 backdrop-blur-xl" />
+
+                                      {/* Content */}
+                                      <div className="relative z-10 flex flex-col items-center justify-center h-full min-h-[280px] p-8 text-center">
+                                        {/* Lock icon with glow ring */}
+                                        <div className="relative mb-5">
+                                          <div className="absolute inset-0 w-16 h-16 rounded-2xl bg-amber-400/20 blur-xl" />
+                                          <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-navy-800 to-navy-900 border border-white/10 flex items-center justify-center shadow-lg">
+                                            <svg className="w-7 h-7 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                                            </svg>
+                                          </div>
+                                        </div>
+
+                                        <h4 className="text-[15px] font-bold text-white mb-1.5">Slides Paused</h4>
+                                        <p className="text-[12px] text-white/50 max-w-[240px] leading-relaxed mb-5">
+                                          Quiz in progress — slides are hidden to keep your assessment fair
+                                        </p>
+
+                                        <button
+                                          onClick={() => setSlidesUnlocked(true)}
+                                          className="group flex items-center gap-2 px-4 py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.08] hover:border-white/[0.15] text-white/70 hover:text-white transition-all text-[12px] font-semibold"
+                                        >
+                                          <svg className="w-3.5 h-3.5 text-white/40 group-hover:text-amber-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                                          </svg>
+                                          View Anyway
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <ErrorBoundary inline label="slide viewer">
+                                    <Suspense fallback={
+                                      <div className="flex items-center gap-2 p-4 bg-surface-50 border border-surface-200/60 rounded-lg">
+                                        <div className="w-4 h-4 border-2 border-navy-300 border-t-navy-600 rounded-full animate-spin" />
+                                        <span className="text-[12px] text-navy-500 font-medium">Loading slide viewer...</span>
+                                      </div>
+                                    }>
+                                      <SlideRangeViewer
+                                        documentUrl={docUrl}
+                                        pageRange={activity.page_range}
+                                        onClose={() => setActiveSlideViewer(null)}
+                                      />
+                                    </Suspense>
+                                  </ErrorBoundary>
+                                </div>
+                              )}
+                              {isViewerOpen && !docUrl && (
+                                <p className="mt-1 text-[11px] text-surface-400">Document not available for inline viewing.</p>
+                              )}
+                            </div>
+                          )
+                        })()}
+
                         {/* Inline Resource Card + Audio */}
                         {(() => {
                           const dayResources = resources.filter(
@@ -385,14 +552,21 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
                           const matchingResource = dayResources.length > 0
                             ? (dayResources.find(r => {
                                 if (activity.activity_type === 'video') return r.resource_type === 'youtube_video'
-                                if (activity.activity_type === 'reading' || activity.activity_type === 'review') return r.resource_type === 'article' || r.resource_type === 'documentation' || r.resource_type === 'uploaded_slides'
-                                if (activity.activity_type === 'practice' || activity.activity_type === 'interactive') return r.resource_type === 'practice' || r.resource_type === 'interactive'
+                                if (activity.activity_type === 'audio') return r.resource_type === 'youtube_video' || r.resource_type === 'article' || r.resource_type === 'documentation'
+                                if (['reading', 'review', 'written'].includes(activity.activity_type)) return r.resource_type === 'article' || r.resource_type === 'documentation' || r.resource_type === 'uploaded_slides'
+                                if (activity.activity_type === 'practice' || activity.activity_type === 'interactive') return r.resource_type === 'practice' || r.resource_type === 'interactive' || r.resource_type === 'youtube_video'
                                 return r.resource_url // any resource with a URL
                               }) || dayResources.find(r => r.resource_url) || dayResources[0])
                             : null
                           if (!matchingResource) return null
 
-                          const showAudio = ['reading', 'review'].includes(activity.activity_type)
+                          const showAudio = true // Podcast available for all learning styles
+                          const showExercises = isKinestheticPlan || ['practice', 'interactive', 'project'].includes(activity.activity_type)
+                          const showStudyCards = isReadingPlan || ['reading', 'review', 'written'].includes(activity.activity_type)
+
+                          // First audio activity per day → ElevenLabs (premium), rest → OpenAI nova
+                          const isFirstAudioOfDay = isAudioPlan && audioCountForDay === 0
+                          if (isAudioPlan) audioCountForDay++
 
                           return (
                             <div className="mt-2 space-y-2">
@@ -403,7 +577,78 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
                                   resource={matchingResource}
                                   topic={plan.topic}
                                   activityDescription={activity.description}
+                                  pageRange={activity.page_range}
+                                  isPrimary={isFirstAudioOfDay}
                                 />
+                              )}
+                              {showExercises && (
+                                <PracticeExercise
+                                  planId={plan.id}
+                                  resource={matchingResource}
+                                  topic={plan.topic}
+                                  activityDescription={activity.description}
+                                  pageRange={activity.page_range}
+                                />
+                              )}
+                              {showStudyCards && (
+                                <StudyCards
+                                  planId={plan.id}
+                                  resource={matchingResource}
+                                  topic={plan.topic}
+                                  activityDescription={activity.description}
+                                  pageRange={activity.page_range}
+                                />
+                              )}
+                              {/* Per-section quiz button — only when slides exist */}
+                              {hasSlideContent && (activity.page_range || /(?:slide|page)s?\s*\d/i.test(activity.description || '')) && onTakeQuiz && (
+                                <button
+                                  onClick={async () => {
+                                    const key = `${day.day_number}-${actIdx}`
+                                    setSectionQuizLoading(key)
+                                    try {
+                                      const quizResult = await generateSectionQuiz(
+                                        plan.id,
+                                        activity.page_range || null,
+                                        activity.description || '',
+                                        5
+                                      )
+                                      // Re-use the existing onTakeQuiz flow but with the generated quiz
+                                      if (quizResult?.quiz_id) {
+                                        onTakeQuiz({ ...plan, _sectionQuizId: quizResult.quiz_id, _sectionLabel: activity.page_range ? `Pages ${activity.page_range}` : 'Section' })
+                                      }
+                                    } catch (err) {
+                                      console.error('Section quiz generation failed:', err)
+                                      setSectionQuizError(`${day.day_number}-${actIdx}:${friendlyError(err)}`)
+                                      setTimeout(() => setSectionQuizError(null), 6000)
+                                    } finally {
+                                      setSectionQuizLoading(null)
+                                    }
+                                  }}
+                                  disabled={sectionQuizLoading === `${day.day_number}-${actIdx}`}
+                                  className="flex items-center gap-1.5 w-full justify-center px-3 py-2 bg-violet-50 hover:bg-violet-100 disabled:bg-violet-50/60 border border-violet-200/60 text-violet-700 rounded-lg text-[11px] font-semibold transition-all"
+                                >
+                                  {sectionQuizLoading === `${day.day_number}-${actIdx}` ? (
+                                    <>
+                                      <div className="w-3 h-3 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
+                                      Generating section quiz...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                      </svg>
+                                      Quiz this section{activity.page_range ? ` (Pages ${activity.page_range})` : ''}
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                              {sectionQuizError?.startsWith(`${day.day_number}-${actIdx}:`) && (
+                                <p className="flex items-center gap-1.5 text-[11px] text-red-500 font-medium mt-1.5 animate-fade-up-0">
+                                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                                  </svg>
+                                  {sectionQuizError.split(':').slice(1).join(':')}
+                                </p>
                               )}
                             </div>
                           )

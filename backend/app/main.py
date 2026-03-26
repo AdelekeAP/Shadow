@@ -219,10 +219,9 @@ Rate limits are enforced **per authenticated user** (via JWT). Unauthenticated e
 )
 
 # Configure CORS - Environment-based origin restrictions
-if os.getenv("ENVIRONMENT") == "production":
-    origins = [
-        os.getenv("PRODUCTION_FRONTEND_URL", "https://shadow.pau.edu.ng"),
-    ]
+if os.getenv("ENVIRONMENT", "development") == "production":
+    _cors_raw = os.getenv("CORS_ORIGINS", "")
+    origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] if _cors_raw else []
 else:
     origins = [
         "http://localhost:3000",
@@ -392,6 +391,7 @@ async def detailed_health_check(current_user = Depends(get_current_user)):
 # Import and include routers
 from app.routes import auth, courses, tasks, cgpa, recommendations, mood, smartstudy, library, content_curation, notifications, analytics, semesters
 from app.routes import admin
+from app.routes import health
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(courses.router, prefix="/api/v1/courses", tags=["Courses"])
@@ -406,6 +406,7 @@ app.include_router(content_curation.router, tags=["Content Curation"])
 app.include_router(notifications.router, prefix="/api/v1", tags=["Notifications"])
 app.include_router(analytics.router, prefix="/api/v1", tags=["Analytics"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(health.router, prefix="/api/v1/health", tags=["health"])
 
 
 if __name__ == "__main__":

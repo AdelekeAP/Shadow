@@ -1,7 +1,7 @@
 """
 Library Pydantic Schemas - Request/Response validation
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -36,6 +36,12 @@ class LibraryDocumentResponse(BaseModel):
 class VoteRequest(BaseModel):
     """Request schema for voting on a document"""
     vote_value: int = Field(..., ge=-1, le=1, description="Vote value: +1 for upvote, -1 for downvote")
+
+    @validator('vote_value')
+    def no_zero(cls, v):
+        if v == 0:
+            raise ValueError('vote_value must be -1 or 1')
+        return v
 
 
 class LibraryBrowseRequest(BaseModel):

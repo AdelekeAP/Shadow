@@ -200,7 +200,7 @@ class TestCourseTaskCompletionCGPAFlow:
             "level": "400",
             "status": "C",
             "department": "Computer Science",
-        })
+        }, headers=headers)
         assert course_resp.status_code == 201, f"Course creation failed: {course_resp.text}"
         course_id = course_resp.json()["id"]
 
@@ -613,7 +613,7 @@ class TestLibraryBrowsingFlow:
             "code": f"LIB{uuid.uuid4().hex[:4].upper()}",
             "title": "Data Structures",
             "credits": 3,
-        })
+        }, headers=headers)
         assert course_resp.status_code == 201
         course_id = course_resp.json()["id"]
 
@@ -843,7 +843,7 @@ class TestFullStudentSessionFlow:
             "code": "CSC410",
             "title": "Software Engineering",
             "credits": 3,
-        })
+        }, headers=headers)
         assert course.status_code == 201
         course_id = course.json()["id"]
 
@@ -1167,7 +1167,7 @@ class TestCrossSystemIntegrationFlow:
             "code": f"CSC{uuid.uuid4().hex[:3].upper()}",
             "title": "Test Course",
             "credits": 3,
-        })
+        }, headers=headers)
         assert course.status_code == 201
         course_id = course.json()["id"]
 
@@ -1302,13 +1302,20 @@ class TestCrossSystemIntegrationFlow:
 
     def test_health_check_endpoints(self, client):
         """Both health check endpoints should respond."""
-        # Basic health
+        # Basic health (no auth required)
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
 
-        # Detailed health
-        resp_detailed = client.get("/health/detailed")
+        # Detailed health (requires auth)
+        reg = client.post("/api/v1/auth/register", json={
+            "email": f"e2e_health_{uuid.uuid4().hex[:8]}@pau.edu.ng",
+            "password": "HealthTest1!",
+            "full_name": "Health Check User",
+            "target_cgpa": 4.0,
+        })
+        headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+        resp_detailed = client.get("/health/detailed", headers=headers)
         assert resp_detailed.status_code == 200
         data = resp_detailed.json()
         assert "services" in data

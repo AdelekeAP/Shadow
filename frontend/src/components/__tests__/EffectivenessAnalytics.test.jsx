@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import EffectivenessAnalytics from '../EffectivenessAnalytics'
 
 vi.mock('../../services/api', () => ({
@@ -140,6 +140,11 @@ function mockAllAPIs() {
 describe('EffectivenessAnalytics', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('renders loading state initially', () => {
@@ -193,7 +198,7 @@ describe('EffectivenessAnalytics', () => {
       expect(screen.queryByText('Loading analytics...')).not.toBeInTheDocument()
     })
 
-    expect(screen.getByText('SmartStudy Effectiveness')).toBeInTheDocument()
+    expect(screen.getByText('Effectiveness Analytics')).toBeInTheDocument()
     expect(screen.getByText('Overview')).toBeInTheDocument()
     expect(screen.getByText('Learning Styles')).toBeInTheDocument()
     expect(screen.getByText('Trends')).toBeInTheDocument()
@@ -202,7 +207,7 @@ describe('EffectivenessAnalytics', () => {
 
   it('switches to Learning Styles tab when clicked', async () => {
     mockAllAPIs()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<EffectivenessAnalytics onClose={vi.fn()} />)
 
     await waitFor(() => {
@@ -218,7 +223,7 @@ describe('EffectivenessAnalytics', () => {
 
   it('switches to Trends tab and shows chart content', async () => {
     mockAllAPIs()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<EffectivenessAnalytics onClose={vi.fn()} />)
 
     await waitFor(() => {
@@ -227,13 +232,13 @@ describe('EffectivenessAnalytics', () => {
 
     await user.click(screen.getByText('Trends'))
 
-    expect(screen.getByText('Study Activity Over Time (Last 30 Days)')).toBeInTheDocument()
+    expect(screen.getByText('Study Activity Over Time')).toBeInTheDocument()
     expect(screen.getByText('Resource Engagement Over Time')).toBeInTheDocument()
   })
 
   it('switches to Mood Impact tab and shows mood data', async () => {
     mockAllAPIs()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<EffectivenessAnalytics onClose={vi.fn()} />)
 
     await waitFor(() => {
@@ -266,7 +271,7 @@ describe('EffectivenessAnalytics', () => {
   it('calls onClose when close button in footer is clicked', async () => {
     mockAllAPIs()
     const onClose = vi.fn()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<EffectivenessAnalytics onClose={onClose} />)
 
     await waitFor(() => {
@@ -275,6 +280,8 @@ describe('EffectivenessAnalytics', () => {
 
     // Click the "Close" button in the footer
     await user.click(screen.getByText('Close'))
+    // handleClose uses setTimeout(onClose, 200)
+    vi.advanceTimersByTime(300)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
@@ -304,7 +311,7 @@ describe('EffectivenessAnalytics', () => {
 
   it('shows statistical data when Research tab clicked', async () => {
     mockAllAPIs()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<EffectivenessAnalytics onClose={vi.fn()} />)
 
     await waitFor(() => {
@@ -328,7 +335,7 @@ describe('EffectivenessAnalytics', () => {
   it('shows empty state when sample_size is 0', async () => {
     mockAllAPIs()
     getStatisticalAnalysis.mockResolvedValue(mockStatsEmpty)
-    const user = userEvent.setup()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<EffectivenessAnalytics onClose={vi.fn()} />)
 
     await waitFor(() => {
@@ -346,7 +353,7 @@ describe('EffectivenessAnalytics', () => {
 
   it('displays interpretation text', async () => {
     mockAllAPIs()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     render(<EffectivenessAnalytics onClose={vi.fn()} />)
 
     await waitFor(() => {
