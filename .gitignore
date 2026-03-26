@@ -57,6 +57,9 @@ htmlcov/
 # Audio cache (generated MP3 files)
 backend/audio_cache/
 
+# User-uploaded library files
+backend/library/
+
 # OS
 Thumbs.db
 
