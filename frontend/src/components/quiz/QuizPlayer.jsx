@@ -157,7 +157,8 @@ export default function QuizPlayer({ quiz, onComplete, onCancel }) {
       console.error('Error submitting quiz:', err)
       submittedRef.current = false
       setSubmitting(false)
-      setSubmitError(err.response?.data?.detail || 'Failed to submit quiz. Please try again.')
+      const detail = err.response?.data?.detail || err.detail
+      setSubmitError(detail || 'Failed to submit quiz. Please try again.')
     }
   }
 

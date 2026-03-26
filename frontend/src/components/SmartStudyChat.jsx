@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import api from '../services/api'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import api, { API_BASE_URL } from '../services/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -12,6 +12,8 @@ const SparkleIcon = ({ className = 'w-4 h-4' }) => (
 
 export default function SmartStudyChat({ onClose }) {
   const [messages, setMessages] = useState([])
+  const msgIdRef = useRef(0)
+  const nextMsgId = () => ++msgIdRef.current
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [conversationId, setConversationId] = useState(null)
@@ -21,11 +23,18 @@ export default function SmartStudyChat({ onClose }) {
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
   const backdropRef = useRef(null)
+  const activeControllerRef = useRef(null)
   const [showHistory, setShowHistory] = useState(false)
   const [conversations, setConversations] = useState([])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [chatError, setChatError] = useState(null)
 
   useEffect(() => { requestAnimationFrame(() => setEntering(true)) }, [])
+  useEffect(() => {
+    if (!chatError) return
+    const t = setTimeout(() => setChatError(null), 5000)
+    return () => clearTimeout(t)
+  }, [chatError])
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
   useEffect(() => { loadSuggestedPrompts() }, [])
   useEffect(() => { if (entering && !loading) inputRef.current?.focus() }, [entering])
@@ -36,23 +45,29 @@ export default function SmartStudyChat({ onClose }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // Abort any active stream on unmount
+  useEffect(() => {
+    return () => { activeControllerRef.current?.abort() }
+  }, [])
+
   const close = () => { setEntering(false); setTimeout(onClose, 200) }
 
   const loadSuggestedPrompts = async () => {
     try {
       const r = await api.get('/api/v1/smartstudy/suggested-prompts')
       setSuggestedPrompts(r.data || [])
-    } catch (e) { console.error('Error loading suggested prompts:', e) }
+    } catch (e) { /* suggested prompts are non-critical, fail silently */ }
   }
 
   const fallbackToNonStreaming = async (content) => {
     try {
       const r = await api.post('/api/v1/smartstudy/chat', { content, conversation_id: conversationId })
       if (!conversationId && r.data.conversation_id) setConversationId(r.data.conversation_id)
-      setMessages(prev => [...prev, { role: 'assistant', content: r.data.ai_response, tokens_used: r.data.tokens_used }])
+      setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: r.data.ai_response, tokens_used: r.data.tokens_used }])
     } catch (e) {
       console.error('SmartStudy chat error:', e)
       setMessages(prev => [...prev, {
+        id: nextMsgId(),
         role: 'assistant',
         content: 'Sorry, I encountered an error. Please try again.',
         error: true,
@@ -68,13 +83,18 @@ export default function SmartStudyChat({ onClose }) {
     const content = (messageText || input).trim()
     if (!content) return
 
-    setMessages(prev => [...prev, { role: 'user', content }])
+    setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content }])
     setInput('')
     setShowSuggestions(false)
     setLoading(true)
 
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    const baseUrl = API_BASE_URL
     const token = localStorage.getItem('access_token')
+
+    // Abort if no data received within 60 seconds
+    const controller = new AbortController()
+    activeControllerRef.current = controller
+    const timeout = setTimeout(() => controller.abort(), 60000)
 
     let response
     try {
@@ -85,8 +105,10 @@ export default function SmartStudyChat({ onClose }) {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ content, conversation_id: conversationId }),
+        signal: controller.signal,
       })
     } catch (e) {
+      clearTimeout(timeout)
       console.error('Streaming connection error:', e)
       // Network error — fall back to non-streaming
       return fallbackToNonStreaming(content)
@@ -98,8 +120,8 @@ export default function SmartStudyChat({ onClose }) {
     }
 
     // Add placeholder streaming message
-    const streamIdx = messages.length + 1 // index of the AI message we'll add
-    setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true }])
+    const newMsgId = nextMsgId()
+    setMessages(prev => [...prev, { id: newMsgId, role: 'assistant', content: '', streaming: true }])
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -123,16 +145,16 @@ export default function SmartStudyChat({ onClose }) {
           if (event.type === 'meta') {
             if (!conversationId && event.conversation_id) setConversationId(event.conversation_id)
           } else if (event.type === 'token') {
-            setMessages(prev => prev.map((msg, i) =>
-              i === streamIdx ? { ...msg, content: msg.content + event.content } : msg
+            setMessages(prev => prev.map(msg =>
+              msg.id === newMsgId ? { ...msg, content: msg.content + event.content } : msg
             ))
           } else if (event.type === 'done') {
-            setMessages(prev => prev.map((msg, i) =>
-              i === streamIdx ? { ...msg, streaming: false } : msg
+            setMessages(prev => prev.map(msg =>
+              msg.id === newMsgId ? { ...msg, streaming: false } : msg
             ))
           } else if (event.type === 'error') {
-            setMessages(prev => prev.map((msg, i) =>
-              i === streamIdx
+            setMessages(prev => prev.map(msg =>
+              msg.id === newMsgId
                 ? { ...msg, streaming: false, error: true, content: event.message, originalContent: content }
                 : msg
             ))
@@ -141,17 +163,19 @@ export default function SmartStudyChat({ onClose }) {
       }
 
       // Ensure streaming flag is cleared even if no done event
-      setMessages(prev => prev.map((msg, i) =>
-        i === streamIdx && msg.streaming ? { ...msg, streaming: false } : msg
+      setMessages(prev => prev.map(msg =>
+        msg.id === newMsgId && msg.streaming ? { ...msg, streaming: false } : msg
       ))
     } catch (e) {
       console.error('Stream read error:', e)
-      setMessages(prev => prev.map((msg, i) =>
-        i === streamIdx
-          ? { ...msg, streaming: false, error: true, content: 'Connection lost. Please try again.', originalContent: content }
+      setMessages(prev => prev.map(msg =>
+        msg.id === newMsgId
+          ? { ...msg, streaming: false, error: true, content: e.name === 'AbortError' ? 'Request timed out. Please try again.' : 'Connection lost. Please try again.', originalContent: content }
           : msg
       ))
     } finally {
+      clearTimeout(timeout)
+      activeControllerRef.current = null
       setLoading(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
@@ -175,8 +199,10 @@ export default function SmartStudyChat({ onClose }) {
     try {
       const r = await api.get('/api/v1/smartstudy/conversations', { params: { limit: 20 } })
       setConversations(r.data || [])
-    } catch (e) { console.error('Error loading conversations:', e) }
-    finally { setLoadingHistory(false) }
+    } catch (e) {
+      console.error('Error loading conversations:', e)
+      setChatError('Could not load conversation history.')
+    } finally { setLoadingHistory(false) }
   }
 
   const loadConversation = async (conv) => {
@@ -184,10 +210,13 @@ export default function SmartStudyChat({ onClose }) {
       const r = await api.get(`/api/v1/smartstudy/conversations/${conv.id}`)
       const data = r.data
       setConversationId(data.id)
-      setMessages((data.messages || []).map(m => ({ role: m.role, content: m.content, tokens_used: m.tokens_used })))
+      setMessages((data.messages || []).map(m => ({ id: nextMsgId(), role: m.role, content: m.content, tokens_used: m.tokens_used })))
       setShowHistory(false)
       setShowSuggestions(false)
-    } catch (e) { console.error('Error loading conversation:', e) }
+    } catch (e) {
+      console.error('Error loading conversation:', e)
+      setChatError('Could not load this conversation.')
+    }
   }
 
   const deleteConversation = async (convId, e) => {
@@ -196,7 +225,10 @@ export default function SmartStudyChat({ onClose }) {
       await api.delete(`/api/v1/smartstudy/conversations/${convId}`)
       setConversations(prev => prev.filter(c => c.id !== convId))
       if (conversationId === convId) startNewConversation()
-    } catch (e) { console.error('Error deleting conversation:', e) }
+    } catch (e) {
+      console.error('Error deleting conversation:', e)
+      setChatError('Could not delete conversation.')
+    }
   }
 
   const toggleHistory = () => {
@@ -350,9 +382,9 @@ export default function SmartStudyChat({ onClose }) {
               {/* Suggested prompts */}
               {showSuggestions && suggestedPrompts.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg mx-auto">
-                  {suggestedPrompts.map((prompt, i) => (
+                  {suggestedPrompts.map((prompt) => (
                     <button
-                      key={i}
+                      key={prompt.prompt}
                       onClick={() => sendMessage(prompt.prompt)}
                       className="group flex items-start gap-3 p-3.5 rounded-xl border border-surface-200/80 bg-white hover:border-navy-300/60 hover:bg-navy-800/[0.02] transition-all text-left"
                     >
@@ -371,8 +403,8 @@ export default function SmartStudyChat({ onClose }) {
           )}
 
           {/* Message bubbles */}
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          {messages.map((msg) => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {msg.role === 'assistant' && (
                 <div className="w-6 h-6 rounded-lg bg-navy-800 flex items-center justify-center flex-shrink-0 mr-2.5 mt-1">
                   <SparkleIcon className="w-3 h-3 text-white" />
@@ -461,6 +493,23 @@ export default function SmartStudyChat({ onClose }) {
             SmartStudy knows your enrolled courses, task deadlines, and CGPA goals
           </p>
         </div>
+
+        {/* ── Error toast ── */}
+        {chatError && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10 animate-fade-up">
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-50/95 border border-red-200/80 text-red-700 shadow-lg backdrop-blur-sm">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+              <p className="text-[12px] font-medium">{chatError}</p>
+              <button onClick={() => setChatError(null)} className="p-0.5 rounded-md hover:bg-red-100 transition-colors ml-1">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -3,8 +3,9 @@ Semester Routes - Academic year and semester management
 """
 import re
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Dict
 from uuid import UUID
 
@@ -38,21 +39,6 @@ class AssignCoursesRequest(BaseModel):
     user_course_ids: List[str]
 
 
-# ── Auth dependency ──────────────────────────────────
-
-async def get_user_from_token(
-    authorization: str = Header(...),
-    db: Session = Depends(get_db)
-) -> User:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication scheme"
-        )
-    token = authorization.replace("Bearer ", "")
-    return await get_current_user(token, db)
-
-
 # ── Endpoints ────────────────────────────────────────
 
 @router.post(
@@ -63,7 +49,7 @@ async def get_user_from_token(
 async def create_academic_year(
     request: AcademicYearCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ) -> Dict:
     """
     Create an academic year which auto-generates First and Second Semester.
@@ -138,7 +124,14 @@ async def create_academic_year(
 
     db.add(first_sem)
     db.add(second_sem)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(first_sem)
     db.refresh(second_sem)
 
@@ -156,7 +149,7 @@ async def create_academic_year(
 )
 async def list_semesters(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ) -> List[Dict]:
     """Get all semesters ordered by start date (newest first)."""
     semesters = db.query(Semester).filter(
@@ -173,7 +166,7 @@ async def list_semesters(
 )
 async def get_active_semester(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ) -> Dict:
     """Get the user's currently active semester, or null if none."""
     semester = db.query(Semester).filter(
@@ -192,7 +185,7 @@ async def get_active_semester(
 async def activate_semester(
     semester_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ) -> Dict:
     """Activate a semester (deactivates all others)."""
     try:
@@ -218,7 +211,14 @@ async def activate_semester(
     ).update({"is_active": False})
 
     semester.is_active = True
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(semester)
 
     return {"success": True, "semester": semester.to_dict()}
@@ -233,7 +233,7 @@ async def update_semester(
     semester_id: str,
     request: SemesterUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ) -> Dict:
     """Update semester name, target GPA, or active status."""
     try:
@@ -248,7 +248,7 @@ async def update_semester(
     if not semester:
         raise HTTPException(status_code=404, detail="Semester not found")
 
-    update_data = request.dict(exclude_unset=True)
+    update_data = request.model_dump(exclude_unset=True)
 
     # If activating via update, lock and deactivate all other semesters first
     if update_data.get("is_active") is True:
@@ -264,7 +264,14 @@ async def update_semester(
     for field, value in update_data.items():
         setattr(semester, field, value)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(semester)
 
     return {"success": True, "semester": semester.to_dict()}
@@ -278,7 +285,7 @@ async def update_semester(
 async def delete_semester(
     semester_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """Delete a semester. Courses in this semester become unassigned."""
     try:
@@ -299,7 +306,14 @@ async def delete_semester(
     ).update({"semester_id": None})
 
     db.delete(semester)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
 
     return {"success": True}
 
@@ -313,7 +327,7 @@ async def assign_courses_to_semester(
     semester_id: str,
     request: AssignCoursesRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_user_from_token)
+    current_user: User = Depends(get_current_user)
 ) -> Dict:
     """Bulk-assign user courses to a semester."""
     try:
@@ -338,6 +352,13 @@ async def assign_courses_to_semester(
             uc.semester_id = sem_uuid
             updated += 1
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
 
     return {"success": True, "updated": updated}

@@ -1,14 +1,10 @@
 import { useState, useEffect } from 'react'
-import { createVideoNote, getVideoNotes, deleteVideoNote, reportBrokenResource } from '../../services/api'
+import { createVideoNote, getVideoNotes, deleteVideoNote, reportBrokenResource, API_BASE_URL } from '../../services/api'
 import { linkifyText, getNoteColorClass, getNoteTypeIcon, getResourceStyle, getYouTubeVideoId } from './studyPlanHelpers.jsx'
-import DocumentViewer from '../DocumentViewer'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export default function ResourceCard({ resource, onPlayFullScreen, compact = false }) {
   const [isExpanded, setIsExpanded] = useState(!compact)
   const [isVideoLoaded, setIsVideoLoaded] = useState(false)
-  const [showDocViewer, setShowDocViewer] = useState(false)
   const [reported, setReported] = useState(!!resource.report_reason)
   const [reporting, setReporting] = useState(false)
 
@@ -220,36 +216,15 @@ export default function ResourceCard({ resource, onPlayFullScreen, compact = fal
                 </button>
               )}
 
-              {/* Uploaded slides — open in DocumentViewer */}
-              {resource.resource_type === 'uploaded_slides' && (() => {
-                // Extract library document ID from URL like /api/v1/library/documents/{id}/view
-                const libDocMatch = resource.resource_url?.match(/\/library\/documents\/([^/]+)\/view/)
-                const libDocId = libDocMatch ? libDocMatch[1] : null
-
-                if (libDocId) {
-                  return (
-                    <button
-                      onClick={() => setShowDocViewer(true)}
-                      className="text-[11px] px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold transition-all flex items-center gap-1.5"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      Open Slides
-                    </button>
-                  )
-                }
-
-                return (
-                  <span className="text-[11px] px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg font-semibold flex items-center gap-1.5 border border-amber-200/60">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                    </svg>
-                    Refer to your uploaded slides
-                  </span>
-                )
-              })()}
+              {/* Uploaded slides — label only (inline SlideRangeViewer handles viewing) */}
+              {resource.resource_type === 'uploaded_slides' && (
+                <span className="text-[11px] px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg font-semibold flex items-center gap-1.5 border border-amber-200/60">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                  </svg>
+                  Your Uploaded Slides
+                </span>
+              )}
 
               {resource.resource_url && resource.resource_type !== 'youtube_video' && resource.resource_type !== 'uploaded_slides' && (() => {
                 // Resolve API-relative URLs (e.g. /api/v1/library/documents/xxx/view)
@@ -464,22 +439,6 @@ export default function ResourceCard({ resource, onPlayFullScreen, compact = fal
         </div>
       )}
 
-      {/* DocumentViewer modal for uploaded slides */}
-      {showDocViewer && (() => {
-        const match = resource.resource_url?.match(/\/library\/documents\/([^/]+)\/view/)
-        const docId = match ? match[1] : null
-        if (!docId) return null
-        return (
-          <DocumentViewer
-            document={{
-              id: docId,
-              topic: resource.resource_title || 'Uploaded Slides',
-              file_name: resource.resource_title || 'slides.pdf',
-            }}
-            onClose={() => setShowDocViewer(false)}
-          />
-        )
-      })()}
     </div>
   )
 }

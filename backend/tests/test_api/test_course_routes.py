@@ -11,7 +11,7 @@ import pytest
 # Helper to create a course
 # ===================================================================
 
-def create_course(client, code="CSC401", title="Software Engineering", credits=3):
+def create_course(client, code="CSC401", title="Software Engineering", credits=3, headers=None):
     """Helper to create a course via API"""
     return client.post("/api/v1/courses/", json={
         "code": code,
@@ -20,7 +20,7 @@ def create_course(client, code="CSC401", title="Software Engineering", credits=3
         "level": "400",
         "status": "C",
         "department": "Computer Science",
-    })
+    }, headers=headers)
 
 
 # ===================================================================
@@ -29,8 +29,8 @@ def create_course(client, code="CSC401", title="Software Engineering", credits=3
 
 class TestCreateCourse:
 
-    def test_create_course_success(self, client):
-        response = create_course(client)
+    def test_create_course_success(self, client, auth_headers):
+        response = create_course(client, headers=auth_headers)
         assert response.status_code == 201
         data = response.json()
         assert data["code"] == "CSC401"
@@ -38,41 +38,41 @@ class TestCreateCourse:
         assert data["credits"] == 3
         assert data["is_approved"] is True
 
-    def test_duplicate_course_code_rejected(self, client):
-        create_course(client, code="CSC401")
-        response = create_course(client, code="CSC401", title="Different Title")
+    def test_duplicate_course_code_rejected(self, client, auth_headers):
+        create_course(client, code="CSC401", headers=auth_headers)
+        response = create_course(client, code="CSC401", title="Different Title", headers=auth_headers)
         assert response.status_code == 400
         assert "already exists" in response.json()["detail"]
 
-    def test_course_with_different_codes(self, client):
-        r1 = create_course(client, code="CSC401", title="Software Engineering")
-        r2 = create_course(client, code="CSC403", title="Artificial Intelligence")
+    def test_course_with_different_codes(self, client, auth_headers):
+        r1 = create_course(client, code="CSC401", title="Software Engineering", headers=auth_headers)
+        r2 = create_course(client, code="CSC403", title="Artificial Intelligence", headers=auth_headers)
         assert r1.status_code == 201
         assert r2.status_code == 201
 
-    def test_invalid_credits_rejected(self, client):
+    def test_invalid_credits_rejected(self, client, auth_headers):
         response = client.post("/api/v1/courses/", json={
             "code": "CSC999",
             "title": "Bad Course",
             "credits": 0,  # Must be >= 1
-        })
+        }, headers=auth_headers)
         assert response.status_code == 422
 
-    def test_credits_max_6(self, client):
+    def test_credits_max_6(self, client, auth_headers):
         response = client.post("/api/v1/courses/", json={
             "code": "CSC999",
             "title": "Bad Course",
             "credits": 7,  # Must be <= 6
-        })
+        }, headers=auth_headers)
         assert response.status_code == 422
 
-    def test_invalid_status_rejected(self, client):
+    def test_invalid_status_rejected(self, client, auth_headers):
         response = client.post("/api/v1/courses/", json={
             "code": "CSC999",
             "title": "Bad Status",
             "credits": 3,
             "status": "X",  # Must be C, E, or R
-        })
+        }, headers=auth_headers)
         assert response.status_code == 422
 
 
@@ -82,23 +82,23 @@ class TestCreateCourse:
 
 class TestListCourses:
 
-    def test_list_empty_courses(self, client):
-        response = client.get("/api/v1/courses/")
+    def test_list_empty_courses(self, client, auth_headers):
+        response = client.get("/api/v1/courses/", headers=auth_headers)
         assert response.status_code == 200
         assert response.json() == []
 
-    def test_list_after_creating(self, client):
-        create_course(client, code="CSC401", title="Software Engineering")
-        create_course(client, code="CSC403", title="Artificial Intelligence")
-        response = client.get("/api/v1/courses/")
+    def test_list_after_creating(self, client, auth_headers):
+        create_course(client, code="CSC401", title="Software Engineering", headers=auth_headers)
+        create_course(client, code="CSC403", title="Artificial Intelligence", headers=auth_headers)
+        response = client.get("/api/v1/courses/", headers=auth_headers)
         assert response.status_code == 200
         courses = response.json()
         assert len(courses) == 2
 
-    def test_list_courses_sorted_by_code(self, client):
-        create_course(client, code="MTH401", title="Maths")
-        create_course(client, code="CSC401", title="SE")
-        response = client.get("/api/v1/courses/")
+    def test_list_courses_sorted_by_code(self, client, auth_headers):
+        create_course(client, code="MTH401", title="Maths", headers=auth_headers)
+        create_course(client, code="CSC401", title="SE", headers=auth_headers)
+        response = client.get("/api/v1/courses/", headers=auth_headers)
         codes = [c["code"] for c in response.json()]
         assert codes == sorted(codes)
 
@@ -109,8 +109,8 @@ class TestListCourses:
 
 class TestGetCourse:
 
-    def test_get_existing_course(self, client):
-        create_resp = create_course(client)
+    def test_get_existing_course(self, client, auth_headers):
+        create_resp = create_course(client, headers=auth_headers)
         course_id = create_resp.json()["id"]
         response = client.get(f"/api/v1/courses/{course_id}")
         assert response.status_code == 200
@@ -133,7 +133,7 @@ class TestGetCourse:
 class TestEnrollInCourse:
 
     def test_successful_enrollment(self, client, auth_headers):
-        course = create_course(client).json()
+        course = create_course(client, headers=auth_headers).json()
         response = client.post("/api/v1/courses/enroll", json={
             "course_id": course["id"],
         }, headers=auth_headers)
@@ -144,7 +144,7 @@ class TestEnrollInCourse:
         assert data["is_priority"] is False
 
     def test_enrollment_with_priority(self, client, auth_headers):
-        course = create_course(client).json()
+        course = create_course(client, headers=auth_headers).json()
         response = client.post("/api/v1/courses/enroll", json={
             "course_id": course["id"],
             "is_priority": True,
@@ -156,7 +156,7 @@ class TestEnrollInCourse:
         assert data["is_carryover"] is True
 
     def test_duplicate_enrollment_rejected(self, client, auth_headers):
-        course = create_course(client).json()
+        course = create_course(client, headers=auth_headers).json()
         client.post("/api/v1/courses/enroll", json={
             "course_id": course["id"],
         }, headers=auth_headers)
@@ -172,12 +172,12 @@ class TestEnrollInCourse:
         }, headers=auth_headers)
         assert response.status_code == 404
 
-    def test_enroll_without_auth(self, client):
-        course = create_course(client).json()
+    def test_enroll_without_auth(self, client, auth_headers):
+        course = create_course(client, headers=auth_headers).json()
         response = client.post("/api/v1/courses/enroll", json={
             "course_id": course["id"],
         })
-        assert response.status_code == 422  # Missing Authorization header
+        assert response.status_code == 401  # Missing Authorization header
 
 
 # ===================================================================
@@ -192,7 +192,7 @@ class TestMyCourses:
         assert response.json() == []
 
     def test_my_courses_after_enrollment(self, client, auth_headers):
-        course = create_course(client).json()
+        course = create_course(client, headers=auth_headers).json()
         client.post("/api/v1/courses/enroll", json={
             "course_id": course["id"],
         }, headers=auth_headers)
@@ -210,7 +210,7 @@ class TestMyCourses:
 class TestUnenroll:
 
     def test_successful_unenroll(self, client, auth_headers):
-        course = create_course(client).json()
+        course = create_course(client, headers=auth_headers).json()
         enroll_resp = client.post("/api/v1/courses/enroll", json={
             "course_id": course["id"],
         }, headers=auth_headers)

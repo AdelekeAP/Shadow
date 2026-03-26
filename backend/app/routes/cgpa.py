@@ -3,7 +3,7 @@ CGPA Routes - API endpoints for CGPA calculations and analytics
 """
 import logging
 import re
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import Dict, List
@@ -15,6 +15,7 @@ from app.models.course import Course, UserCourse, Semester
 from app.models.task import Task
 from app.services.cache_service import cache_get, cache_set, cache_delete_pattern
 from app.services.cgpa_export_service import generate_csv, generate_pdf
+from app.middleware.rate_limiter import limiter
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,9 @@ class PredictionRequest(BaseModel):
     operation_id="get_cgpa_dashboard",
     summary="Get comprehensive CGPA dashboard data",
 )
+@limiter.limit("20/minute")
 def get_cgpa_dashboard(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -75,7 +78,9 @@ def get_cgpa_dashboard(
     operation_id="get_current_cgpa",
     summary="Get current CGPA only",
 )
+@limiter.limit("20/minute")
 def get_current_cgpa(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -216,8 +221,10 @@ def get_semester_gpa(
     operation_id="calculate_target_requirements",
     summary="Calculate what GPA is needed to reach a target CGPA",
 )
+@limiter.limit("10/minute")
 def calculate_target_requirements(
-    request: TargetCGPARequest,
+    request: Request,
+    body: TargetCGPARequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -239,8 +246,8 @@ def calculate_target_requirements(
         target_analysis = CGPACalculator.calculate_target_semester_gpa(
             current_cgpa=current_cgpa,
             current_credits=current_credits,
-            target_cgpa=request.target_cgpa,
-            semester_credits=request.semester_credits
+            target_cgpa=body.target_cgpa,
+            semester_credits=body.semester_credits
         )
 
         return {
@@ -258,8 +265,10 @@ def calculate_target_requirements(
     operation_id="predict_final_cgpa",
     summary="Predict final CGPA based on predicted course performance",
 )
+@limiter.limit("10/minute")
 def predict_final_cgpa(
-    request: PredictionRequest,
+    request: Request,
+    body: PredictionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -280,7 +289,7 @@ def predict_final_cgpa(
         prediction = CGPACalculator.predict_final_cgpa(
             current_cgpa=current_cgpa,
             current_credits=current_credits,
-            predicted_courses=request.predicted_courses
+            predicted_courses=body.predicted_courses
         )
 
         return {
@@ -298,7 +307,9 @@ def predict_final_cgpa(
     operation_id="get_semester_breakdown",
     summary="Get detailed semester-by-semester breakdown",
 )
+@limiter.limit("20/minute")
 def get_semester_breakdown(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -334,7 +345,9 @@ def get_semester_breakdown(
     operation_id="get_cgpa_analytics",
     summary="Get advanced CGPA analytics and insights",
 )
+@limiter.limit("20/minute")
 def get_cgpa_analytics(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -422,7 +435,9 @@ def get_cgpa_analytics(
     operation_id="export_cgpa_csv",
     summary="Export CGPA data as CSV",
 )
+@limiter.limit("10/hour")
 def export_cgpa_csv(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -451,7 +466,9 @@ def export_cgpa_csv(
     operation_id="export_cgpa_pdf",
     summary="Export CGPA data as PDF",
 )
+@limiter.limit("10/hour")
 def export_cgpa_pdf(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

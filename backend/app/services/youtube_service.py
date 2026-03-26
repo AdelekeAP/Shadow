@@ -32,10 +32,13 @@ def _track_quota(units: int) -> None:
     if _quota_tracker["reset_day"] != today:
         _quota_tracker["units"] = 0
         _quota_tracker["reset_day"] = today
+        # Reset exhausted keys on new day — all quotas refresh at midnight PT
+        if _youtube_service and hasattr(_youtube_service, '_exhausted_keys'):
+            _youtube_service._exhausted_keys.clear()
     _quota_tracker["units"] += units
     used = _quota_tracker["units"]
     if used >= _DAILY_QUOTA_LIMIT:
-        logger.error(f"YouTube API daily quota EXCEEDED ({used}/{_DAILY_QUOTA_LIMIT} units)")
+        logger.error(f"YouTube API daily quota EXCEEDED ({used}/{_DAILY_QUOTA_LIMIT} units)", exc_info=True)
     elif used >= _DAILY_QUOTA_LIMIT * _QUOTA_WARNING_PCT:
         logger.warning(f"YouTube API quota at {used}/{_DAILY_QUOTA_LIMIT} units ({round(used/_DAILY_QUOTA_LIMIT*100)}%)")
 
@@ -46,28 +49,60 @@ def _cache_key(query: str, max_results: int, duration: str, order: str) -> str:
 
 
 class YouTubeService:
-    """Service for interacting with YouTube Data API v3"""
+    """Service for interacting with YouTube Data API v3.
+
+    Supports multiple API keys for automatic rotation when quota is exhausted.
+    Set YOUTUBE_API_KEY to a comma-separated list of keys in .env:
+        YOUTUBE_API_KEY=key1,key2,key3
+    When one key hits quota, the service automatically rotates to the next.
+    """
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialize YouTube service with API key
+        Initialize YouTube service with one or more API keys.
 
         Args:
-            api_key: YouTube Data API v3 key (defaults to env variable)
+            api_key: Single key or comma-separated keys (defaults to env variable)
         """
-        self.api_key = api_key or os.getenv("YOUTUBE_API_KEY")
-        if not self.api_key:
+        raw_keys = api_key or os.getenv("YOUTUBE_API_KEY", "")
+        self._api_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+        self._current_key_index = 0
+        self._exhausted_keys: set = set()  # Keys that hit quota today
+
+        if not self._api_keys:
             logger.warning("YouTube API key not configured - service will be disabled")
             self.youtube = None
+            self.api_key = None
         else:
+            self.api_key = self._api_keys[0]
             self.youtube = build('youtube', 'v3', developerKey=self.api_key)
+            if len(self._api_keys) > 1:
+                logger.info(f"YouTube service initialized with {len(self._api_keys)} API keys (rotation enabled)")
+
+    def _rotate_key(self) -> bool:
+        """Try rotating to the next available API key.
+
+        Returns True if a fresh key was activated, False if all keys are exhausted.
+        """
+        self._exhausted_keys.add(self.api_key)
+        for i in range(len(self._api_keys)):
+            candidate = self._api_keys[(self._current_key_index + 1 + i) % len(self._api_keys)]
+            if candidate not in self._exhausted_keys:
+                self._current_key_index = self._api_keys.index(candidate)
+                self.api_key = candidate
+                self.youtube = build('youtube', 'v3', developerKey=self.api_key)
+                logger.info(f"Rotated to YouTube API key #{self._current_key_index + 1}/{len(self._api_keys)}")
+                return True
+        logger.error("All YouTube API keys exhausted — no more keys to rotate to", exc_info=True)
+        return False
 
     def search_videos(
         self,
         query: str,
         max_results: int = 10,
         duration: str = "medium",  # short (<4min), medium (4-20min), long (>20min)
-        order: str = "relevance"  # relevance, viewCount, rating, date
+        order: str = "relevance",  # relevance, viewCount, rating, date
+        _retry_depth: int = 0
     ) -> List[Dict]:
         """
         Search for educational videos on YouTube
@@ -82,7 +117,7 @@ class YouTubeService:
             List of video metadata dictionaries
         """
         if not self.youtube:
-            logger.error("YouTube service not initialized - missing API key")
+            logger.error("YouTube service not initialized - missing API key", exc_info=True)
             return []
 
         # Check in-memory cache first
@@ -134,7 +169,14 @@ class YouTubeService:
             return videos
 
         except Exception as e:
-            logger.error(f"Error searching YouTube: {e}")
+            error_str = str(e).lower()
+            # Detect quota exhaustion and try rotating to next key (with depth limit)
+            if "quota" in error_str or "rateLimitExceeded" in str(e) or "403" in error_str:
+                logger.warning(f"YouTube API quota exceeded for key #{self._current_key_index + 1}: {e}")
+                if _retry_depth < len(self._api_keys) and self._rotate_key():
+                    logger.info(f"Retrying search with rotated key (attempt {_retry_depth + 1})...")
+                    return self.search_videos(query, max_results, duration, order, _retry_depth=_retry_depth + 1)
+            logger.error(f"Error searching YouTube for query '{query}': {e}", exc_info=True)
             return []
 
     def _parse_video_data(self, item: Dict) -> Dict:
@@ -227,7 +269,7 @@ class YouTubeService:
             List of comment dictionaries
         """
         if not self.youtube:
-            logger.error("YouTube service not initialized")
+            logger.error("YouTube service not initialized", exc_info=True)
             return []
 
         try:
@@ -257,7 +299,7 @@ class YouTubeService:
             return comments
 
         except Exception as e:
-            logger.error(f"Error getting comments for {video_id}: {e}")
+            logger.error(f"Error getting comments for video {video_id}: {e}", exc_info=True)
             return []
 
     def analyze_comment_sentiment(self, comments: List[Dict]) -> Dict:
@@ -323,7 +365,8 @@ class YouTubeService:
         topic: str,
         max_results: int = 5,
         min_quality_score: float = 50.0,
-        fast_mode: bool = True
+        fast_mode: bool = True,
+        subtopics: Optional[List[str]] = None
     ) -> List[Dict]:
         """
         Get curated, high-quality videos for a topic
@@ -340,11 +383,20 @@ class YouTubeService:
         """
         # Search for videos (get more than needed for filtering)
         # Try multiple search queries for better coverage
-        search_queries = [
-            f"{topic} tutorial",
-            f"{topic} explained",
-            f"learn {topic}",
-        ]
+        # Use subtopics (if provided) for more specific searches
+        if subtopics:
+            # Mix specific subtopic queries with a broad topic fallback
+            search_queries = [
+                f"{topic} tutorial",  # Always search the main topic first
+                f"{topic} {subtopics[0]} explained" if len(subtopics) > 0 else f"{topic} explained",
+                f"{topic} {subtopics[1] if len(subtopics) > 1 else ''} lecture".strip(),
+            ]
+        else:
+            search_queries = [
+                f"{topic} tutorial",
+                f"{topic} explained",
+                f"learn {topic}",
+            ]
 
         all_videos = []
         seen_ids = set()
@@ -403,7 +455,7 @@ class YouTubeService:
                     curated_videos.append(video)
 
             except Exception as e:
-                logger.error(f"Error processing video {video['video_id']}: {e}")
+                logger.error(f"Error processing video {video['video_id']} for topic '{topic}': {e}", exc_info=True)
                 # Still include the video with a base score on error
                 video['quality_score'] = 45.0
                 video['has_transcript'] = False

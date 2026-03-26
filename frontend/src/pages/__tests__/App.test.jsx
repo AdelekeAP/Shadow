@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 
@@ -10,7 +10,11 @@ vi.mock('../DashboardPage', () => ({ default: () => <div data-testid="dashboard-
 vi.mock('../CoursesPage', () => ({ default: () => <div data-testid="courses-page">Courses</div> }))
 vi.mock('../CGPAPage', () => ({ default: () => <div data-testid="cgpa-page">CGPA</div> }))
 vi.mock('../LibraryPage', () => ({ default: () => <div data-testid="library-page">Library</div> }))
-vi.mock('../YouTubeTestPage', () => ({ default: () => <div data-testid="youtube-page">YouTube</div> }))
+vi.mock('../SmartStudyPage', () => ({ default: () => <div data-testid="smartstudy-page">SmartStudy</div> }))
+vi.mock('../ForgotPasswordPage', () => ({ default: () => <div data-testid="forgot-page">Forgot</div> }))
+vi.mock('../ResetPasswordPage', () => ({ default: () => <div data-testid="reset-page">Reset</div> }))
+vi.mock('../EmailVerificationPage', () => ({ default: () => <div data-testid="email-page">Email</div> }))
+vi.mock('../ProfilePage', () => ({ default: () => <div data-testid="profile-page">Profile</div> }))
 
 // Mock BrowserRouter so MemoryRouter works
 vi.mock('react-router-dom', async () => {
@@ -29,6 +33,13 @@ vi.mock('../../contexts/AuthContext', () => ({
     user: { full_name: 'Test' },
     token: 'test-token',
   }),
+  AuthProvider: ({ children }) => <>{children}</>,
+}))
+
+// Mock SmartStudyContext so GlobalProcessIndicator renders
+vi.mock('../../contexts/SmartStudyContext', () => ({
+  useSmartStudy: () => ({ activeProcesses: [] }),
+  SmartStudyProvider: ({ children }) => <>{children}</>,
 }))
 
 import App from '../../App'
@@ -57,23 +68,32 @@ describe('App routing', () => {
     expect(screen.getByTestId('register-page')).toBeInTheDocument()
   })
 
-  it('renders dashboard at /dashboard (authenticated)', () => {
+  it('renders dashboard at /dashboard (authenticated)', async () => {
     renderApp('/dashboard')
-    expect(screen.getByTestId('dashboard-page')).toBeInTheDocument()
+    // Lazy-loaded component needs to resolve
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-page')).toBeInTheDocument()
+    })
   })
 
-  it('renders courses page at /courses (authenticated)', () => {
+  it('renders courses page at /courses (authenticated)', async () => {
     renderApp('/courses')
-    expect(screen.getByTestId('courses-page')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('courses-page')).toBeInTheDocument()
+    })
   })
 
-  it('renders CGPA page at /cgpa (authenticated)', () => {
+  it('renders CGPA page at /cgpa (authenticated)', async () => {
     renderApp('/cgpa')
-    expect(screen.getByTestId('cgpa-page')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('cgpa-page')).toBeInTheDocument()
+    })
   })
 
-  it('renders library page at /library (authenticated)', () => {
+  it('renders library page at /library (authenticated)', async () => {
     renderApp('/library')
-    expect(screen.getByTestId('library-page')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('library-page')).toBeInTheDocument()
+    })
   })
 })

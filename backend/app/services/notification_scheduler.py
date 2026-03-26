@@ -17,6 +17,7 @@ from app.models.user import User
 from app.models.mood import MoodLog
 from app.models.notification import ScheduledReminder, NotificationPreference
 from app.services.notification_service import NotificationService, get_notification_service
+from app.services.email_service import send_task_overdue_email
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,23 @@ async def process_overdue_tasks():
                 if not existing:
                     service.create_overdue_notification(task.user_id, task)
                     logger.info(f"Created overdue notification for task {task.id}")
+
+                    # Send overdue email (best-effort)
+                    try:
+                        user = db.query(User).filter(User.id == task.user_id).first()
+                        if user and user.email:
+                            course_name = task.course.title if hasattr(task, 'course') and task.course else "Unknown Course"
+                            due_str = task.due_date.strftime("%b %d, %Y") if task.due_date else "N/A"
+                            send_task_overdue_email(
+                                to=user.email,
+                                name=user.full_name or "Student",
+                                task_title=task.title or "Untitled Task",
+                                course_name=course_name,
+                                due_date=due_str,
+                            )
+                            logger.info(f"Sent overdue email for task {task.id} to {user.email}")
+                    except Exception as email_err:
+                        logger.warning(f"Failed to send overdue email for task {task.id}: {email_err}")
 
             except Exception as e:
                 logger.error(f"Error processing overdue task {task.id}: {e}")

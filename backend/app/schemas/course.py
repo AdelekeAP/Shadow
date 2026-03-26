@@ -14,7 +14,7 @@ class CourseBase(BaseModel):
     level: Optional[str] = Field("400", max_length=10)
     status: Optional[str] = Field("C", max_length=20)
     department: Optional[str] = Field("Computer Science", max_length=100)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=1000)
 
     @validator('status')
     def validate_status(cls, v):

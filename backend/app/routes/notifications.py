@@ -1,16 +1,20 @@
 """
 Notification Routes - API endpoints for Smart Reminders & Notifications
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.utils.auth import get_current_user
 from app.models.user import User
+from app.middleware.rate_limiter import limiter
 from app.models.notification import Notification, NotificationPreference, ScheduledReminder
 from app.services.notification_service import get_notification_service
+from app.services.cache_service import cache_get, cache_set, cache_delete
 from app.schemas.notification import (
     NotificationCreate,
     NotificationResponse,
@@ -38,7 +42,9 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
     operation_id="list_notifications",
     summary="Get user's notifications",
 )
+@limiter.limit("60/minute")
 async def get_notifications(
+    request: Request,
     unread_only: bool = Query(False, description="Filter to unread only"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -81,6 +87,11 @@ async def get_notification_count(
     db: Session = Depends(get_db)
 ):
     """Get notification counts for badge display"""
+    cache_key = f"notif:count:{current_user.id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     service = get_notification_service(db)
     unread_count = service.get_unread_count(current_user.id)
 
@@ -89,10 +100,12 @@ async def get_notification_count(
         Notification.is_dismissed == False
     ).count()
 
-    return NotificationCountResponse(
+    result = NotificationCountResponse(
         unread_count=unread_count,
         total_count=total_count
-    )
+    ).model_dump()
+    cache_set(cache_key, result, ttl=30)
+    return result
 
 
 @router.post(
@@ -108,6 +121,8 @@ async def mark_all_notifications_read(
     """Mark all notifications as read"""
     service = get_notification_service(db)
     count = service.mark_all_as_read(current_user.id)
+
+    cache_delete(f"notif:count:{current_user.id}")
 
     return ActionResult(
         success=True,
@@ -135,6 +150,8 @@ async def dismiss_notifications_batch(
         if service.dismiss_notification(notification_id, current_user.id):
             count += 1
 
+    cache_delete(f"notif:count:{current_user.id}")
+
     return ActionResult(
         success=True,
         message=f"Dismissed {count} notification(s)",
@@ -155,9 +172,16 @@ async def get_my_preferences(
     db: Session = Depends(get_db)
 ):
     """Get current user's notification preferences"""
+    cache_key = f"notif:prefs:{current_user.id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     service = get_notification_service(db)
     prefs = service.get_or_create_preferences(current_user.id)
-    return NotificationPreferenceResponse(**prefs.to_dict())
+    result = NotificationPreferenceResponse(**prefs.to_dict()).model_dump()
+    cache_set(cache_key, result, ttl=600)
+    return result
 
 
 @router.put(
@@ -178,6 +202,9 @@ async def update_my_preferences(
     update_dict = {k: v for k, v in updates.model_dump().items() if v is not None}
 
     prefs = service.update_preferences(current_user.id, update_dict)
+
+    cache_delete(f"notif:prefs:{current_user.id}")
+
     return NotificationPreferenceResponse(**prefs.to_dict())
 
 
@@ -241,7 +268,14 @@ async def create_scheduled_reminder(
     )
 
     db.add(new_reminder)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(new_reminder)
 
     return ScheduledReminderResponse(**new_reminder.to_dict())
@@ -300,7 +334,14 @@ async def update_scheduled_reminder(
     if "scheduled_time" in update_dict:
         reminder.next_run_at = update_dict["scheduled_time"]
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
     db.refresh(reminder)
 
     return ScheduledReminderResponse(**reminder.to_dict())
@@ -327,7 +368,14 @@ async def delete_scheduled_reminder(
         raise HTTPException(status_code=404, detail="Reminder not found")
 
     db.delete(reminder)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Resource already exists")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save changes")
 
     return ActionResult(
         success=True,
@@ -388,6 +436,8 @@ async def test_mood_check_notification(
     db: Session = Depends(get_db)
 ):
     """Create a test mood check notification"""
+    if os.getenv("ENVIRONMENT") == "production":
+        raise HTTPException(status_code=404, detail="Not found")
     service = get_notification_service(db)
     notification = service.create_mood_check_reminder(current_user.id)
 
@@ -407,6 +457,8 @@ async def test_achievement_notification(
     db: Session = Depends(get_db)
 ):
     """Create a test achievement notification"""
+    if os.getenv("ENVIRONMENT") == "production":
+        raise HTTPException(status_code=404, detail="Not found")
     service = get_notification_service(db)
     notification = service.create_achievement_notification(
         user_id=current_user.id,
@@ -465,6 +517,8 @@ async def mark_notification_read(
     if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
 
+    cache_delete(f"notif:count:{current_user.id}")
+
     return ActionResult(
         success=True,
         message="Notification marked as read",
@@ -489,6 +543,8 @@ async def dismiss_notification(
 
     if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
+
+    cache_delete(f"notif:count:{current_user.id}")
 
     return ActionResult(
         success=True,

@@ -5,15 +5,15 @@ PAU-Specific Grading System Utilities
 import math
 from typing import Dict, Tuple, Optional
 
-# PAU Grade Scale (5.0 system)
-PAU_GRADE_SCALE = {
-    (70, 100): {"grade": "A", "points": 5.0, "description": "Excellent"},
-    (60, 69):  {"grade": "B", "points": 4.0, "description": "Good"},
-    (50, 59):  {"grade": "C", "points": 3.0, "description": "Fair"},
-    (45, 49):  {"grade": "D", "points": 2.0, "description": "Pass"},
-    (40, 44):  {"grade": "E", "points": 1.0, "description": "Conditional Pass"},
-    (0, 39):   {"grade": "F", "points": 0.0, "description": "Fail"}
-}
+# PAU Grade Scale (5.0 system) — uses [min, max) ranges to handle fractional scores
+PAU_GRADE_SCALE = [
+    (70, 101, {"grade": "A", "points": 5.0, "description": "Excellent"}),
+    (60, 70,  {"grade": "B", "points": 4.0, "description": "Good"}),
+    (50, 60,  {"grade": "C", "points": 3.0, "description": "Fair"}),
+    (45, 50,  {"grade": "D", "points": 2.0, "description": "Pass"}),
+    (40, 45,  {"grade": "E", "points": 1.0, "description": "Conditional Pass"}),
+    (0,  40,  {"grade": "F", "points": 0.0, "description": "Fail"}),
+]
 
 # Classification Thresholds
 FIRST_CLASS = 4.50
@@ -43,8 +43,8 @@ def convert_score_to_grade(score: float) -> Dict[str, any]:
     """
     if not isinstance(score, (int, float)) or not math.isfinite(score) or score < 0 or score > 100:
         raise ValueError(f"Score must be between 0 and 100, got {score}")
-    for (min_score, max_score), grade_info in PAU_GRADE_SCALE.items():
-        if min_score <= score <= max_score:
+    for min_score, max_score, grade_info in PAU_GRADE_SCALE:
+        if min_score <= score < max_score:
             return grade_info
     return {"grade": "F", "points": 0.0, "description": "Fail"}
 
@@ -134,6 +134,50 @@ def predict_exam_score(ca_score: float, course_difficulty: float = 1.0) -> float
     predicted_exam = exam_percentage * 65
 
     return round(predicted_exam, 2)
+
+
+def calculate_predicted_grade(
+    ca_score: float,
+    exam_score: Optional[float] = None,
+    course_difficulty: float = 1.0,
+    participation_score: Optional[float] = None
+) -> Tuple[float, float, str, float]:
+    """
+    Calculate current and predicted grades for a course.
+
+    Compatible replacement for the legacy grading.calculate_predicted_grade.
+
+    Args:
+        ca_score: Current CA score (out of 35, includes participation if known)
+        exam_score: Actual exam score if taken (out of 65), None if not taken
+        course_difficulty: Course difficulty multiplier (default 1.0)
+        participation_score: Actual participation score if known (out of 5), None if unknown
+
+    Returns:
+        Tuple of (current_score, predicted_score, predicted_letter_grade, predicted_grade_point)
+    """
+    if exam_score is not None:
+        current_score = ca_score + exam_score
+        predicted_score = current_score
+    else:
+        current_score = ca_score
+
+        # For prediction: assume average participation of 3/5 if not provided
+        ca_for_prediction = ca_score
+        if participation_score is None:
+            ca_for_prediction = ca_score + 3.0
+
+        predicted_exam = predict_exam_score(ca_for_prediction, course_difficulty)
+        predicted_score = ca_for_prediction + predicted_exam
+
+    grade_info = convert_score_to_grade(min(max(predicted_score, 0), 100))
+
+    return (
+        round(current_score, 2),
+        round(predicted_score, 2),
+        grade_info["grade"],
+        grade_info["points"]
+    )
 
 
 def estimate_participation(completion_rate: float) -> float:

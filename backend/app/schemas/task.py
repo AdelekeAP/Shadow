@@ -9,7 +9,7 @@ from datetime import datetime
 class TaskBase(BaseModel):
     """Base schema for task data"""
     title: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
     task_type: str = Field(..., max_length=50)
     weight: float = Field(..., gt=0, le=100, description="Task weight in marks (CA max 30, EXAM max 65)")
     max_marks: Optional[float] = Field(None, gt=0, le=100)
@@ -71,7 +71,7 @@ class TaskCreate(TaskBase):
 class TaskUpdate(BaseModel):
     """Schema for updating a task"""
     title: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
     task_type: Optional[str] = Field(None, max_length=50)
     weight: Optional[float] = Field(None, gt=0, le=100)
     max_marks: Optional[float] = Field(None, gt=0, le=100)

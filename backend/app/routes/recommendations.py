@@ -2,13 +2,15 @@
 Recommendations Routes - API endpoints for smart task recommendations
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List, Dict
 from app.database import get_db
 from app.utils.auth import get_current_user
 from app.utils.priority_calculator import PriorityCalculator
 from app.models.user import User
+from app.middleware.rate_limiter import limiter
+from app.services.cache_service import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
@@ -19,7 +21,9 @@ router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
     operation_id="get_priority_tasks",
     summary="Get top priority task recommendations",
 )
+@limiter.limit("30/minute")
 def get_priority_tasks(
+    request: Request,
     limit: int = 5,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -36,6 +40,11 @@ def get_priority_tasks(
     try:
         # Validate limit
         limit = min(max(1, limit), 20)  # Between 1 and 20
+
+        cache_key = f"recs:priority:{current_user.id}:{limit}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
 
         recommendations = PriorityCalculator.get_priority_recommendations(
             user=current_user,
@@ -56,7 +65,7 @@ def get_priority_tasks(
             if rec_type in grouped_recommendations:
                 grouped_recommendations[rec_type].append(rec)
 
-        return {
+        result = {
             "success": True,
             "total_recommendations": len(recommendations),
             "recommendations": recommendations,
@@ -69,11 +78,14 @@ def get_priority_tasks(
             }
         }
 
+        cache_set(cache_key, result, ttl=180)
+        return result
+
     except Exception as e:
         logger.error("Recommendations Error: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error getting recommendations: {str(e)}"
+            detail="Failed to get recommendations"
         )
 
 
@@ -82,7 +94,9 @@ def get_priority_tasks(
     operation_id="get_urgent_tasks",
     summary="Get only urgent tasks due within 48 hours",
 )
+@limiter.limit("30/minute")
 def get_urgent_tasks(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -112,9 +126,10 @@ def get_urgent_tasks(
         }
 
     except Exception as e:
+        logger.error("Error getting urgent tasks: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error getting urgent tasks: {str(e)}"
+            detail="Failed to get urgent tasks"
         )
 
 
@@ -123,7 +138,9 @@ def get_urgent_tasks(
     operation_id="get_goal_driven_tasks",
     summary="Get tasks with high impact on CGPA target",
 )
+@limiter.limit("30/minute")
 def get_goal_driven_tasks(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -154,9 +171,10 @@ def get_goal_driven_tasks(
         }
 
     except Exception as e:
+        logger.error("Error getting goal-driven tasks: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error getting goal-driven tasks: {str(e)}"
+            detail="Failed to get goal-driven tasks"
         )
 
 
@@ -165,7 +183,9 @@ def get_goal_driven_tasks(
     operation_id="get_recovery_tasks",
     summary="Get recovery tasks for critical courses",
 )
+@limiter.limit("30/minute")
 def get_recovery_tasks(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -195,9 +215,10 @@ def get_recovery_tasks(
         }
 
     except Exception as e:
+        logger.error("Error getting recovery tasks: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error getting recovery tasks: {str(e)}"
+            detail="Failed to get recovery tasks"
         )
 
 
@@ -206,7 +227,9 @@ def get_recovery_tasks(
     operation_id="get_recommendations_summary",
     summary="Get a summary of recommendations without full task details",
 )
+@limiter.limit("30/minute")
 def get_recommendations_summary(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -249,7 +272,8 @@ def get_recommendations_summary(
         }
 
     except Exception as e:
+        logger.error("Error getting recommendations summary: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error getting recommendations summary: {str(e)}"
+            detail="Failed to get recommendations summary"
         )

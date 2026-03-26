@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
+import { API_BASE_URL } from '../services/api'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE = API_BASE_URL
 
 export default function DocumentViewer({ document, onClose }) {
   const [loading, setLoading] = useState(true)
@@ -10,10 +11,20 @@ export default function DocumentViewer({ document, onClose }) {
   const backdropRef = useRef(null)
 
   useEffect(() => {
+    // Lock body scroll so the page behind doesn't interfere
+    const prev = window.document.body.style.overflow
+    window.document.body.style.overflow = 'hidden'
     window.scrollTo(0, 0)
     requestAnimationFrame(() => setEntering(true))
     loadDocument()
+
+    // ESC key to close
+    const handleKey = (e) => { if (e.key === 'Escape') close() }
+    window.addEventListener('keydown', handleKey)
+
     return () => {
+      window.document.body.style.overflow = prev
+      window.removeEventListener('keydown', handleKey)
       if (documentUrl?.startsWith('blob:')) window.URL.revokeObjectURL(documentUrl)
     }
   }, [document])

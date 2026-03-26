@@ -16,7 +16,7 @@ def create_course_and_enroll(client, auth_headers, code="CSC401"):
         "credits": 3,
         "level": "400",
         "status": "C",
-    }).json()
+    }, headers=auth_headers).json()
     enrollment = client.post("/api/v1/courses/enroll", json={
         "course_id": course["id"],
     }, headers=auth_headers).json()
@@ -117,7 +117,7 @@ class TestCreateTask:
             "task_type": "test",
             "weight": 10,
         })
-        assert response.status_code == 422  # Missing auth header
+        assert response.status_code == 401  # Missing auth header
 
 
 # ===================================================================

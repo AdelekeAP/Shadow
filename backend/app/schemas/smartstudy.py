@@ -87,6 +87,10 @@ class StudyPlanResourceResponse(BaseModel):
     helpful_rating: Optional[int] = None
     day_number: Optional[int] = None
     order_in_day: Optional[int] = None
+    report_reason: Optional[str] = None
+    reported_at: Optional[datetime] = None
+    has_audio: bool = False
+    audio_url: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -111,6 +115,8 @@ class StudyPlanResponse(BaseModel):
     before_score: Optional[float] = None
     after_score: Optional[float] = None
     effectiveness_score: Optional[float] = None
+    learning_style_used: Optional[str] = None
+    completed_days: Optional[List[int]] = []
     created_at: datetime
     completed_at: Optional[datetime] = None
     resources: List[StudyPlanResourceResponse] = []
@@ -123,8 +129,8 @@ class StudyPlanUpdate(BaseModel):
     """Schema for updating a study plan"""
     completion_percentage: Optional[float] = Field(None, ge=0.0, le=100.0)
     is_active: Optional[bool] = None
-    before_score: Optional[float] = None
-    after_score: Optional[float] = None
+    before_score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    after_score: Optional[float] = Field(None, ge=0.0, le=100.0)
     completed_days: Optional[List[int]] = None
 
 

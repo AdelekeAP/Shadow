@@ -75,7 +75,7 @@ describe('StudyPlanDetails — Before/After Score UI', () => {
     renderDetails({ before_score: null, is_active: true })
     expect(screen.getByTestId('before-score-prompt')).toBeInTheDocument()
     expect(screen.getByText('Rate Your Current Knowledge')).toBeInTheDocument()
-    expect(screen.getByText('Save Baseline Score')).toBeInTheDocument()
+    expect(screen.getByText('Save Baseline')).toBeInTheDocument()
   })
 
   it('does NOT render before-score prompt when before_score is already set', () => {
@@ -92,9 +92,9 @@ describe('StudyPlanDetails — Before/After Score UI', () => {
     const user = userEvent.setup()
     renderDetails({ before_score: null, is_active: true })
 
-    const input = screen.getByPlaceholderText('0-100')
+    const input = screen.getByPlaceholderText('0–100')
     await user.type(input, '45')
-    await user.click(screen.getByText('Save Baseline Score'))
+    await user.click(screen.getByText('Save Baseline'))
 
     expect(mockOnSubmitBeforeScore).toHaveBeenCalledWith(45)
   })
@@ -125,7 +125,7 @@ describe('StudyPlanDetails — Before/After Score UI', () => {
     renderDetails({ completion_percentage: 100, after_score: null })
 
     // There may be two inputs on the page (before + after), get the right one
-    const inputs = screen.getAllByPlaceholderText('0-100')
+    const inputs = screen.getAllByPlaceholderText('0–100')
     const afterInput = inputs[inputs.length - 1]
     await user.type(afterInput, '82')
     await user.click(screen.getByText('Submit Final Score'))

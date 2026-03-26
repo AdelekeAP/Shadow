@@ -7,7 +7,7 @@ import { uploadToLibrary, getEnrolledCourses } from '../services/api'
 
 export default function LibraryPage() {
   const navigate = useNavigate()
-  const { logout: doLogout } = useAuth()
+  const { user } = useAuth()
   const [showUpload, setShowUpload] = useState(false)
   const [browserKey, setBrowserKey] = useState(0)
 
@@ -49,13 +49,16 @@ export default function LibraryPage() {
           <div className="flex items-center gap-2">
             <NotificationBell />
             <button
-              onClick={() => { doLogout() }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[13px] font-medium text-surface-400 hover:text-navy-800 hover:bg-surface-100 transition-colors"
+              onClick={() => navigate('/profile')}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-surface-100 transition-colors group"
+              title="View profile"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-              </svg>
-              <span className="hidden sm:inline">Sign out</span>
+              <div className="w-7 h-7 rounded-full bg-navy-100 flex items-center justify-center group-hover:bg-navy-200 transition-colors">
+                <span className="text-[11px] font-bold text-navy-800">
+                  {(user?.full_name || 'U').split(' ').map(n => n[0]).join('').slice(0, 2)}
+                </span>
+              </div>
+              <span className="hidden sm:inline text-[13px] font-medium text-surface-400 group-hover:text-navy-800 transition-colors">{user?.full_name?.split(' ')[0] || 'User'}</span>
             </button>
           </div>
         </div>

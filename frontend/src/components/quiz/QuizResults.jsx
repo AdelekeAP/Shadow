@@ -117,6 +117,8 @@ export default function QuizResults({ attempt, quiz, onRetake, onCreateStudyPlan
   const [expandedQuestion, setExpandedQuestion] = useState(null)
   const [showAllExplanations, setShowAllExplanations] = useState(false)
 
+  const answersData = attempt?.answers || []
+
   // Auto-expand first incorrect answer
   const [autoExpanded, setAutoExpanded] = useState(false)
   useEffect(() => {
@@ -136,7 +138,6 @@ export default function QuizResults({ attempt, quiz, onRetake, onCreateStudyPlan
   const knowledgeGaps = attempt.knowledge_gaps || {}
   const weakTopics = knowledgeGaps.weak_topics || []
   const strongTopics = knowledgeGaps.strong_topics || []
-  const answersData = attempt.answers || []
 
   const toggleQuestion = (questionId) => {
     setExpandedQuestion((prev) => (prev === questionId ? null : questionId))

@@ -116,7 +116,13 @@ function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-8 text-center text-[13px] text-surface-400">
+          <p className="mt-4 text-center">
+            <Link to="/forgot-password" className="text-[12px] text-surface-400 hover:text-navy-700 transition-colors">
+              Forgot your password?
+            </Link>
+          </p>
+
+          <p className="mt-4 text-center text-[13px] text-surface-400">
             Don't have an account?{' '}
             <Link to="/register" className="text-navy-700 hover:text-navy-900 font-semibold transition-colors">Register</Link>
           </p>

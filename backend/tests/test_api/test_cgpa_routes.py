@@ -18,11 +18,11 @@ def setup_user_with_courses(client, auth_headers):
     c1 = client.post("/api/v1/courses/", json={
         "code": "CSC401", "title": "Software Engineering", "credits": 3,
         "level": "400", "status": "C",
-    }).json()
+    }, headers=auth_headers).json()
     c2 = client.post("/api/v1/courses/", json={
         "code": "CSC403", "title": "Artificial Intelligence", "credits": 3,
         "level": "400", "status": "C",
-    }).json()
+    }, headers=auth_headers).json()
 
     # Enroll
     e1 = client.post("/api/v1/courses/enroll", json={

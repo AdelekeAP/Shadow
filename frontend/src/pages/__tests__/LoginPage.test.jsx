@@ -10,11 +10,10 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate }
 })
 
-vi.mock('../../services/api', () => ({
-  login: vi.fn(),
+const mockLogin = vi.fn()
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ login: mockLogin, isAuthenticated: false, loading: false }),
 }))
-
-import { login } from '../../services/api'
 
 function renderLogin() {
   return render(<MemoryRouter><LoginPage /></MemoryRouter>)
@@ -27,27 +26,27 @@ describe('LoginPage', () => {
 
   it('renders login form with email and password fields', () => {
     renderLogin()
-    expect(screen.getByPlaceholderText(/email/i)).toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/••••••••/)).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('your.email@pau.edu.ng')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Enter your password')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
   it('renders link to register page', () => {
     renderLogin()
-    expect(screen.getByText(/register here/i)).toBeInTheDocument()
+    expect(screen.getByText('Register')).toBeInTheDocument()
   })
 
   it('calls login API on form submission', async () => {
-    login.mockResolvedValue({ access_token: 'tok', user: { id: 1 } })
+    mockLogin.mockResolvedValue({ access_token: 'tok', user: { id: 1 } })
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText(/email/i), 'test@pau.edu.ng')
-    await user.type(screen.getByPlaceholderText(/••••••••/), 'Password123!')
+    await user.type(screen.getByPlaceholderText('your.email@pau.edu.ng'), 'test@pau.edu.ng')
+    await user.type(screen.getByPlaceholderText('Enter your password'), 'Password123!')
     await user.click(screen.getByRole('button', { name: /sign in/i }))
 
     await waitFor(() => {
-      expect(login).toHaveBeenCalledWith({
+      expect(mockLogin).toHaveBeenCalledWith({
         email: 'test@pau.edu.ng',
         password: 'Password123!',
       })
@@ -55,12 +54,12 @@ describe('LoginPage', () => {
   })
 
   it('navigates to dashboard on successful login', async () => {
-    login.mockResolvedValue({ access_token: 'tok', user: { id: 1, full_name: 'Test' } })
+    mockLogin.mockResolvedValue({ access_token: 'tok', user: { id: 1, full_name: 'Test' } })
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText(/email/i), 'test@pau.edu.ng')
-    await user.type(screen.getByPlaceholderText(/••••••••/), 'Password123!')
+    await user.type(screen.getByPlaceholderText('your.email@pau.edu.ng'), 'test@pau.edu.ng')
+    await user.type(screen.getByPlaceholderText('Enter your password'), 'Password123!')
     await user.click(screen.getByRole('button', { name: /sign in/i }))
 
     await waitFor(() => {
@@ -69,12 +68,12 @@ describe('LoginPage', () => {
   })
 
   it('displays error message on failed login', async () => {
-    login.mockRejectedValue({ detail: 'Incorrect email or password' })
+    mockLogin.mockRejectedValue({ detail: 'Incorrect email or password' })
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText(/email/i), 'wrong@pau.edu.ng')
-    await user.type(screen.getByPlaceholderText(/••••••••/), 'bad')
+    await user.type(screen.getByPlaceholderText('your.email@pau.edu.ng'), 'wrong@pau.edu.ng')
+    await user.type(screen.getByPlaceholderText('Enter your password'), 'bad')
     await user.click(screen.getByRole('button', { name: /sign in/i }))
 
     await waitFor(() => {
@@ -84,15 +83,16 @@ describe('LoginPage', () => {
 
   it('shows loading state during submission', async () => {
     let resolveLogin
-    login.mockImplementation(() => new Promise((r) => { resolveLogin = r }))
+    mockLogin.mockImplementation(() => new Promise((r) => { resolveLogin = r }))
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByPlaceholderText(/email/i), 'test@pau.edu.ng')
-    await user.type(screen.getByPlaceholderText(/••••••••/), 'Password123!')
+    await user.type(screen.getByPlaceholderText('your.email@pau.edu.ng'), 'test@pau.edu.ng')
+    await user.type(screen.getByPlaceholderText('Enter your password'), 'Password123!')
     await user.click(screen.getByRole('button', { name: /sign in/i }))
 
-    expect(screen.getByText(/signing in/i)).toBeInTheDocument()
+    // Button should be disabled during loading
+    expect(screen.getByRole('button').closest('button')).toBeDisabled()
     resolveLogin({ access_token: 'tok', user: {} })
   })
 })

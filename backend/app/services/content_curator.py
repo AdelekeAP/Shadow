@@ -28,7 +28,8 @@ class ContentCurator:
         topic: str,
         learning_style: str = "balanced",
         max_results: int = 10,
-        min_quality_score: float = 60.0
+        min_quality_score: float = 60.0,
+        subtopics: Optional[List[str]] = None
     ) -> Dict:
         """
         Curate high-quality learning resources for a topic
@@ -53,12 +54,15 @@ class ContentCurator:
             'combined_recommendations': []
         }
 
-        # Get YouTube videos
+        # Get YouTube videos (pass subtopics for more specific searches)
+        # Use full quality mode (transcripts + comments) for better curation
         try:
             videos = self.youtube.get_curated_videos(
                 topic=topic,
                 max_results=max_results * 2,  # Get extra for filtering
-                min_quality_score=min_quality_score
+                min_quality_score=min_quality_score,
+                fast_mode=False,  # Full quality: transcripts + comment analysis
+                subtopics=subtopics or []
             )
             results['videos'] = videos[:max_results]
             logger.info(f"Found {len(results['videos'])} high-quality YouTube videos")
@@ -239,6 +243,20 @@ class ContentCurator:
 
             return adapted[:max_results]
 
+        # For kinesthetic learners, prioritize style-matched content first
+        if learning_style == "kinesthetic":
+            # First, add resources with style_match (hands-on keywords detected)
+            for resource in resources:
+                if resource.get('style_match'):
+                    adapted.append(resource)
+
+            # Then fill with remaining resources up to max_results
+            for resource in resources:
+                if not resource.get('style_match') and len(adapted) < max_results:
+                    adapted.append(resource)
+
+            return adapted[:max_results]
+
         # Standard behavior for other learning styles
         for resource in resources:
             # Check if resource matches preferred types
@@ -275,7 +293,11 @@ class ContentCurator:
 
         elif learning_style == "audio":
             if resource['type'] == 'youtube_video':
-                boost += 10
+                boost += 15
+                # Extra boost for lecture-style content
+                title_lower = resource['title'].lower()
+                if any(kw in title_lower for kw in ['lecture', 'explanation', 'podcast', 'talk']):
+                    boost += 5
 
         elif learning_style == "reading":
             if resource['type'] == 'reddit_post':
@@ -285,10 +307,13 @@ class ContentCurator:
                 boost += 8
 
         elif learning_style == "kinesthetic":
-            # Boost hands-on tutorials
+            # Boost hands-on and interactive content
             title_lower = resource['title'].lower()
-            if any(keyword in title_lower for keyword in ['hands-on', 'build', 'project', 'practice', 'interactive']):
+            if any(keyword in title_lower for keyword in ['hands-on', 'build', 'project', 'practice', 'interactive', 'exercise', 'lab', 'workshop']):
                 boost += 15
+                # Extra boost for coding-specific content
+                if any(kw in title_lower for kw in ['code', 'coding', 'implement', 'tutorial', 'step-by-step']):
+                    boost += 5
 
         return boost
 

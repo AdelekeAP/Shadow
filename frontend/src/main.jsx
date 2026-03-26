@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import * as Sentry from '@sentry/react'
 import App from './App.jsx'
 import { AuthProvider } from './contexts/AuthContext'
+import { SmartStudyProvider } from './contexts/SmartStudyContext'
 import './styles/index.css'
 
 // Initialize Sentry for error tracking (only if DSN is configured)
@@ -23,7 +24,9 @@ if (sentryDsn) {
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AuthProvider>
-      <App />
+      <SmartStudyProvider>
+        <App />
+      </SmartStudyProvider>
     </AuthProvider>
   </React.StrictMode>,
 )

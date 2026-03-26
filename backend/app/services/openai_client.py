@@ -2,6 +2,7 @@
 Shared OpenAI Client - Singleton client with retry, fallback, and circuit breaker
 """
 import os
+import random
 import time
 import logging
 import threading
@@ -13,9 +14,9 @@ from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-# Model fallback chains
-CHAT_MODELS = ["gpt-4", "gpt-4-turbo-preview", "gpt-3.5-turbo"]
-PLAN_MODELS = ["gpt-4-turbo-preview", "gpt-4", "gpt-3.5-turbo"]
+# Model fallback chains (primary → capable fallback → budget fallback)
+CHAT_MODELS = ["gpt-5.4", "gpt-4.1", "gpt-4.1-mini"]
+PLAN_MODELS = ["gpt-4.1", "gpt-5.4", "gpt-4.1-mini"]
 
 
 class OpenAIErrorType(str, Enum):
@@ -227,14 +228,24 @@ def call_with_retry(
     for model in models:
         for attempt in range(max_retries + 1):
             try:
+                # Newer models (gpt-5.x, o-series) require max_completion_tokens
+                # instead of max_tokens. Translate automatically.
+                call_kwargs = dict(kwargs)
+                if "max_tokens" in call_kwargs:
+                    call_kwargs["max_completion_tokens"] = call_kwargs.pop("max_tokens")
+
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
                     stream=stream,
                     timeout=timeout,
-                    **kwargs,
+                    **call_kwargs,
                 )
                 _circuit_breaker.record_success()
+                logger.info(
+                    "OpenAI call succeeded: model=%s, attempt=%d/%d",
+                    model, attempt + 1, max_retries + 1,
+                )
                 return response
 
             except Exception as exc:
@@ -250,12 +261,12 @@ def call_with_retry(
                 ):
                     raise classified
 
-                # Exponential backoff before retry
+                # Exponential backoff with jitter before retry
                 if attempt < max_retries:
-                    delay = (2 ** attempt)  # 1s, 2s
+                    delay = (2 ** attempt) + random.uniform(0, 0.5)
                     logger.warning(
                         f"OpenAI call failed ({model}, attempt {attempt + 1}): "
-                        f"{classified.error_type.value} — retrying in {delay}s"
+                        f"{classified.error_type.value} — retrying in {delay:.1f}s"
                     )
                     time.sleep(delay)
                 else:

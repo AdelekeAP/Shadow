@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react'
-import { generateStudyPlan, getEnrolledCourses, browseLibrary } from '../../services/api'
+import { useState, useEffect, useRef } from 'react'
+import { getEnrolledCourses, browseLibrary } from '../../services/api'
+import { useSmartStudy } from '../../contexts/SmartStudyContext'
+import GeneratingOverlay from '../GeneratingOverlay'
 
 /* ─── SVG Icons ─── */
 const UploadIcon = ({ className }) => (
@@ -48,7 +50,9 @@ const STYLES = [
   )},
 ]
 
-export default function StudyPlanForm({ generating, setGenerating, onPlanGenerated, onCancel }) {
+export default function StudyPlanForm({ onPlanGenerated, onCancel }) {
+  const { generating, startGeneration } = useSmartStudy()
+  const fileInputRef = useRef(null)
   const [topic, setTopic] = useState('')
   const [duration, setDuration] = useState('auto')
   const [learningStyle, setLearningStyle] = useState('auto')
@@ -60,6 +64,8 @@ export default function StudyPlanForm({ generating, setGenerating, onPlanGenerat
   const [showLibraryBrowser, setShowLibraryBrowser] = useState(false)
   const [selectedLibraryDoc, setSelectedLibraryDoc] = useState(null)
   const [libraryDocuments, setLibraryDocuments] = useState([])
+  const [styleWarning, setStyleWarning] = useState(null)
+  const [validationError, setValidationError] = useState(null)
 
   useEffect(() => { loadEnrolledCourses() }, [])
 
@@ -69,41 +75,35 @@ export default function StudyPlanForm({ generating, setGenerating, onPlanGenerat
   }
 
   const loadLibraryDocuments = async (courseId = null) => {
-    try { setLibraryDocuments(await browseLibrary(courseId ? { courseId } : {})) }
+    try { const res = await browseLibrary(courseId ? { courseId } : {}); setLibraryDocuments(res.documents || []) }
     catch (err) { console.error('Error loading library:', err) }
   }
 
   const handleGeneratePlan = async (e) => {
     e.preventDefault()
     if (!topic.trim() && !uploadedFile && !selectedLibraryDoc) {
-      alert('Please enter what you want to learn, upload a file, or select from library')
+      setValidationError('Please enter what you want to learn, upload a file, or select from library')
       return
     }
     if (uploadedFile && !selectedCourse) {
-      alert('Please select a course so your slides can be saved and opened later')
+      setValidationError('Please select a course so your slides can be saved and opened later')
       return
     }
-    try {
-      setGenerating(true)
-      const result = await generateStudyPlan({
-        topic: topic.trim() || selectedLibraryDoc?.topic || null,
-        durationDays: duration === 'auto' ? null : parseInt(duration),
-        difficultyLevel: 'auto',
-        learningStyle: learningStyle === 'auto' ? null : learningStyle,
-        triggerType: 'student_request',
-        uploadedFile,
-        libraryDocumentId: selectedLibraryDoc?.id || null,
-        courseId: (uploadedFile || isSchoolMaterial) ? selectedCourse : (selectedLibraryDoc?.course_id || null),
-        isSchoolMaterial,
-        weekNumber: isSchoolMaterial && weekNumber ? parseInt(weekNumber) : null,
-      })
-      onPlanGenerated(result)
-    } catch (err) {
-      console.error('Error generating study plan:', err)
-      alert('Failed to generate study plan. Please try again.')
-    } finally {
-      setGenerating(false)
-    }
+    setValidationError(null)
+    // Delegate to context — generation persists across route navigation
+    startGeneration({
+      topic: topic.trim() || selectedLibraryDoc?.topic || null,
+      durationDays: duration === 'auto' ? null : parseInt(duration),
+      difficultyLevel: 'auto',
+      learningStyle: learningStyle === 'auto' ? null : learningStyle,
+      triggerType: 'student_request',
+      uploadedFile,
+      libraryDocumentId: selectedLibraryDoc?.id || null,
+      courseId: (uploadedFile || isSchoolMaterial) ? selectedCourse : (selectedLibraryDoc?.course_id || null),
+      isSchoolMaterial,
+      weekNumber: isSchoolMaterial && weekNumber ? parseInt(weekNumber) : null,
+    })
+    onPlanGenerated()
   }
 
   const handleFileChange = (e) => {
@@ -111,26 +111,56 @@ export default function StudyPlanForm({ generating, setGenerating, onPlanGenerat
     if (!file) return
     const ext = file.name.split('.').pop().toLowerCase()
     if (!['pdf', 'pptx', 'ppt'].includes(ext)) {
-      alert('Invalid file type. Please upload PDF or PPTX files only.')
+      setValidationError('Invalid file type. Please upload PDF or PPTX files only.')
       e.target.value = ''
       return
     }
     if (file.size / (1024 * 1024) > 10) {
-      alert(`File too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Maximum size is 10MB.`)
+      setValidationError(`File too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Maximum size is 10MB.`)
       e.target.value = ''
       return
     }
+    setValidationError(null)
     setUploadedFile(file)
   }
 
   const handleClearFile = () => {
     setUploadedFile(null)
-    const input = document.querySelector('input[type="file"]')
-    if (input) input.value = ''
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   return (
     <div className="p-5 sm:p-6">
+      {/* Style mismatch warning banner */}
+      {styleWarning && (
+        <div className="mb-4 bg-amber-50 border border-amber-200/80 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <div className="flex-1">
+              <p className="text-[13px] font-semibold text-amber-800 mb-1">Shadow's Recommendation</p>
+              <p className="text-[12px] text-amber-700 leading-relaxed mb-2">{styleWarning.warning}</p>
+              <p className="text-[11px] text-amber-600">
+                Your plan was generated with <span className="font-semibold">{styleWarning.selected_style}</span> mode.
+                {styleWarning.recommended_styles?.length > 0 && (
+                  <> Try <span className="font-semibold">{styleWarning.recommended_styles[0]}</span> next time for better results with this type of content.</>
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStyleWarning(null)}
+              className="p-1 rounded-lg text-amber-400 hover:text-amber-600 hover:bg-amber-100 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleGeneratePlan} className="space-y-5">
 
         {/* Topic + Duration */}
@@ -181,6 +211,7 @@ export default function StudyPlanForm({ generating, setGenerating, onPlanGenerat
           {!uploadedFile ? (
             <div className="relative">
               <input
+                ref={fileInputRef}
                 type="file"
                 accept=".pdf,.pptx,.ppt"
                 onChange={handleFileChange}
@@ -334,31 +365,34 @@ export default function StudyPlanForm({ generating, setGenerating, onPlanGenerat
             </div>
 
             {/* Share with classmates toggle */}
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5">
-                <button
-                  type="button"
-                  onClick={() => setIsSchoolMaterial(!isSchoolMaterial)}
-                  className={`w-4.5 h-4.5 rounded border-2 flex items-center justify-center transition-all ${
-                    isSchoolMaterial ? 'bg-navy-800 border-navy-800' : 'bg-white border-surface-300 hover:border-navy-400'
-                  }`}
-                >
-                  {isSchoolMaterial && (
-                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                    </svg>
-                  )}
-                </button>
+            <button
+              type="button"
+              onClick={() => setIsSchoolMaterial(!isSchoolMaterial)}
+              className={`w-full flex items-center gap-3 rounded-xl border-2 p-3 transition-all ${
+                isSchoolMaterial
+                  ? 'bg-navy-800/5 border-navy-800'
+                  : 'bg-white border-surface-200 hover:border-navy-400'
+              }`}
+            >
+              <div className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${
+                isSchoolMaterial ? 'bg-navy-800' : 'bg-surface-300'
+              }`}>
+                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  isSchoolMaterial ? 'translate-x-5' : 'translate-x-1'
+                }`} />
               </div>
-              <div className="flex-1">
-                <p className="text-[13px] font-semibold text-navy-900 cursor-pointer" onClick={() => setIsSchoolMaterial(!isSchoolMaterial)}>
-                  Share with classmates (add to public library)
+              <div className="flex-1 text-left">
+                <p className="text-[13px] font-semibold text-navy-900 flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-navy-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                  </svg>
+                  Share with classmates
                 </p>
                 <p className="text-[11px] text-surface-400 mt-0.5">
-                  Your slides are always saved privately. Check this to also share them with other students.
+                  Add your slides to the public library for other students
                 </p>
               </div>
-            </div>
+            </button>
           </div>
         )}
 
@@ -400,6 +434,45 @@ export default function StudyPlanForm({ generating, setGenerating, onPlanGenerat
           </div>
         )}
 
+        {/* Kinesthetic learner hint */}
+        {learningStyle === 'kinesthetic' && (
+          <div className="flex items-center gap-2 text-[12px] text-violet-600 bg-violet-50/50 rounded-lg px-3 py-2 border border-violet-200/60">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+            </svg>
+            Hands-on mode! Every activity will include practice exercises, coding challenges, and interactive tasks.
+          </div>
+        )}
+
+        {/* Reading learner hint */}
+        {learningStyle === 'reading' && (
+          <div className="flex items-center gap-2 text-[12px] text-emerald-600 bg-emerald-50/50 rounded-lg px-3 py-2 border border-emerald-200/60">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+            </svg>
+            Reading mode! Each activity includes flashcards, key concept summaries, and comprehension questions.
+          </div>
+        )}
+
+        {/* Validation error banner */}
+        {validationError && (
+          <div className="flex items-center gap-2.5 p-3 rounded-xl bg-red-50 border border-red-200/80">
+            <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <p className="text-[12px] font-medium text-red-700 flex-1">{validationError}</p>
+            <button
+              type="button"
+              onClick={() => setValidationError(null)}
+              className="p-1 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-100 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+
         {/* Actions */}
         <div className="flex items-center justify-end gap-2.5 pt-1">
           <button
@@ -429,6 +502,9 @@ export default function StudyPlanForm({ generating, setGenerating, onPlanGenerat
           </button>
         </div>
       </form>
+
+      {/* Show generating overlay when plan is being created */}
+      {generating && <GeneratingOverlay />}
     </div>
   )
 }

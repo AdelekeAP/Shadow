@@ -27,6 +27,7 @@ from app.models.notification import (
     DeliveryChannel
 )
 from app.models.usage_log import UsageLog
+from app.models.refresh_token import RefreshToken
 
 __all__ = [
     "User",
@@ -55,5 +56,6 @@ __all__ = [
     "DeliveryChannel",
     "UsageLog",
     "Quiz",
-    "QuizAttempt"
+    "QuizAttempt",
+    "RefreshToken"
 ]

@@ -3,8 +3,11 @@ SmartStudy API Routes - AI Learning Intervention System
 Assembled sub-router package for chat, context, study plans, and video notes.
 """
 import os
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+
+from app.models.user import User
+from app.utils.auth import get_current_user
 
 from app.routes.smartstudy.chat import router as chat_router
 from app.routes.smartstudy.context import router as context_router
@@ -24,7 +27,7 @@ router.include_router(diagrams_router)
 
 
 @router.get("/audio/{filename}", operation_id="serve_audio_file", summary="Serve cached audio MP3")
-async def serve_audio(filename: str):
+async def serve_audio(filename: str, current_user: User = Depends(get_current_user)):
     """Serve a generated audio summary MP3 file."""
     # Sanitize filename to prevent path traversal
     safe_name = os.path.basename(filename)

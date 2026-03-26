@@ -15,9 +15,9 @@ const NODE_COLORS = {
   outcome:  { fill: '#fff7ed', stroke: '#fed7aa', text: '#9a3412', badge: '#ea580c', badgeBg: 'bg-orange-500',   tagBg: 'bg-orange-50',   tagText: 'text-orange-700',   tagBorder: 'border-orange-200/60' },
 }
 
-const NODE_WIDTH = 160
-const NODE_HEIGHT = 58
-const COMPACT_SCALE = 0.85
+const NODE_WIDTH = 190
+const NODE_HEIGHT = 68
+const COMPACT_SCALE = 0.92
 
 /* ─── Layout Algorithms ─── */
 
@@ -31,14 +31,14 @@ function layoutTree(nodes, edges) {
   })
   const sortedLevels = [...levels.keys()].sort((a, b) => a - b)
   const maxNodesInLevel = Math.max(...[...levels.values()].map(l => l.length), 1)
-  const canvasW = Math.max(800, maxNodesInLevel * (NODE_WIDTH + 40))
+  const canvasW = Math.max(800, maxNodesInLevel * (NODE_WIDTH + 60))
   sortedLevels.forEach(lvl => {
     const ids = levels.get(lvl)
     const spacing = canvasW / (ids.length + 1)
-    ids.forEach((id, i) => { positions.set(id, { x: spacing * (i + 1), y: 60 + lvl * 120 }) })
+    ids.forEach((id, i) => { positions.set(id, { x: spacing * (i + 1), y: 70 + lvl * 140 }) })
   })
   const maxY = Math.max(...[...positions.values()].map(p => p.y), 0)
-  return { positions, viewBox: `0 0 ${canvasW} ${maxY + 100}` }
+  return { positions, viewBox: `0 0 ${canvasW} ${maxY + 120}` }
 }
 
 function layoutFlow(nodes, edges) {
@@ -57,10 +57,10 @@ function layoutFlow(nodes, edges) {
     for (const next of (adj.get(id) || [])) { inDeg.set(next, inDeg.get(next) - 1); if (inDeg.get(next) === 0) queue.push(next) }
   }
   nodes.forEach(n => { if (!sorted.includes(n.id)) sorted.push(n.id) })
-  const perRow = 4
-  sorted.forEach((id, i) => { positions.set(id, { x: 100 + (i % perRow) * (NODE_WIDTH + 50), y: 60 + Math.floor(i / perRow) * 120 }) })
+  const perRow = 3
+  sorted.forEach((id, i) => { positions.set(id, { x: 120 + (i % perRow) * (NODE_WIDTH + 60), y: 70 + Math.floor(i / perRow) * 140 }) })
   const maxRow = Math.ceil(sorted.length / perRow)
-  return { positions, viewBox: `0 0 ${Math.max(800, perRow * (NODE_WIDTH + 50) + 100)} ${maxRow * 120 + 100}` }
+  return { positions, viewBox: `0 0 ${Math.max(800, perRow * (NODE_WIDTH + 60) + 140)} ${maxRow * 140 + 120}` }
 }
 
 function layoutTimeline(nodes, edges) {
@@ -73,8 +73,8 @@ function layoutTimeline(nodes, edges) {
   let current = start?.id
   while (current && !visited.has(current)) { visited.add(current); ordered.push(current); current = fromMap.get(current) }
   nodes.forEach(n => { if (!visited.has(n.id)) ordered.push(n.id) })
-  ordered.forEach((id, i) => { positions.set(id, { x: 400, y: 60 + i * 110 }) })
-  return { positions, viewBox: `0 0 800 ${ordered.length * 110 + 80}` }
+  ordered.forEach((id, i) => { positions.set(id, { x: 400, y: 70 + i * 130 }) })
+  return { positions, viewBox: `0 0 800 ${ordered.length * 130 + 100}` }
 }
 
 function layoutCycle(nodes, edges) {
@@ -85,12 +85,12 @@ function layoutCycle(nodes, edges) {
   let current = nodes[0]?.id
   while (current && !visited.has(current)) { visited.add(current); ordered.push(current); current = fromMap.get(current) }
   nodes.forEach(n => { if (!visited.has(n.id)) ordered.push(n.id) })
-  const cx = 400, cy = 300, rx = 250, ry = 200, count = ordered.length
+  const cx = 420, cy = 320, rx = 280, ry = 230, count = ordered.length
   ordered.forEach((id, i) => {
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / count
     positions.set(id, { x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) })
   })
-  return { positions, viewBox: '0 0 800 600' }
+  return { positions, viewBox: '0 0 860 660' }
 }
 
 function layoutMindmap(nodes, edges) {
@@ -102,7 +102,7 @@ function layoutMindmap(nodes, edges) {
   const l1 = levels.get(1) || []
   l1.forEach((n, i) => {
     const angle = (2 * Math.PI * i) / Math.max(l1.length, 1) - Math.PI / 2
-    positions.set(n.id, { x: cx + 220 * Math.cos(angle), y: cy + 220 * Math.sin(angle) })
+    positions.set(n.id, { x: cx + 260 * Math.cos(angle), y: cy + 260 * Math.sin(angle) })
   })
   const parentEdges = new Map()
   edges.forEach(e => { const to = e.to || e.to_node; if (!parentEdges.has(to)) parentEdges.set(to, e.from || e.from_node) })
@@ -110,8 +110,8 @@ function layoutMindmap(nodes, edges) {
     (levels.get(lvl) || []).forEach((n, i) => {
       const parentPos = positions.get(parentEdges.get(n.id)) || { x: cx, y: cy }
       const angle = Math.atan2(parentPos.y - cy, parentPos.x - cx)
-      const spread = (i - ((levels.get(lvl) || []).length - 1) / 2) * 0.4
-      positions.set(n.id, { x: parentPos.x + 100 * Math.cos(angle + spread), y: parentPos.y + 100 * Math.sin(angle + spread) })
+      const spread = (i - ((levels.get(lvl) || []).length - 1) / 2) * 0.45
+      positions.set(n.id, { x: parentPos.x + 120 * Math.cos(angle + spread), y: parentPos.y + 120 * Math.sin(angle + spread) })
     })
   }
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
@@ -190,7 +190,7 @@ export default function ConceptDiagram({ diagram, compact = false, className = '
       )}
 
       {/* ─── SVG Canvas ─── */}
-      <div className={`rounded-2xl border border-surface-200/80 overflow-hidden relative ${compact ? 'bg-white' : 'bg-surface-50/50'} animate-fade-up`}
+      <div className={`rounded-2xl border border-surface-200/80 overflow-x-auto overflow-y-hidden relative ${compact ? 'bg-white' : 'bg-surface-50/50'} animate-fade-up`}
         style={compact ? {} : { animationDelay: '0.06s' }}>
 
         {/* Atmosphere orbs (non-compact only) */}
@@ -203,8 +203,9 @@ export default function ConceptDiagram({ diagram, compact = false, className = '
 
         <svg
           viewBox={viewBox}
+          preserveAspectRatio="xMidYMid meet"
           className="w-full h-auto relative z-[1]"
-          style={{ maxHeight: compact ? '360px' : '520px' }}
+          style={{ minHeight: compact ? '280px' : '360px', maxHeight: compact ? '480px' : '620px' }}
           role="img"
           aria-label={`Concept diagram: ${diagram.title}`}
         >
@@ -316,17 +317,69 @@ export default function ConceptDiagram({ diagram, compact = false, className = '
                   <path d={iconPath} fill="none" stroke={colors.badge} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity={0.6} />
                 </g>
 
-                {/* Label */}
-                <text x={pos.x + 6} y={pos.y + 1} textAnchor="middle" dominantBaseline="middle"
-                  fill={colors.text} fontSize={compact ? 11 : 12} fontWeight={600}
-                  fontFamily="'Plus Jakarta Sans', system-ui, sans-serif">
-                  {node.label.length > 20 ? node.label.slice(0, 18) + '\u2026' : node.label}
-                </text>
+                {/* Label — multi-line if long */}
+                {(() => {
+                  const maxChars = compact ? 24 : 26
+                  const label = node.label
+                  if (label.length <= maxChars) {
+                    return (
+                      <text x={pos.x + 8} y={pos.y - 2} textAnchor="middle" dominantBaseline="middle"
+                        fill={colors.text} fontSize={compact ? 11 : 12} fontWeight={600}
+                        fontFamily="'Plus Jakarta Sans', system-ui, sans-serif">
+                        {label}
+                      </text>
+                    )
+                  }
+                  // Split into two lines at nearest space
+                  const mid = Math.floor(label.length / 2)
+                  let splitAt = label.lastIndexOf(' ', mid)
+                  if (splitAt < 5) splitAt = label.indexOf(' ', mid)
+                  if (splitAt < 0) splitAt = maxChars
+                  const line1 = label.slice(0, splitAt).trim()
+                  const line2Raw = label.slice(splitAt).trim()
+                  const line2 = line2Raw.length > maxChars ? line2Raw.slice(0, maxChars - 1) + '\u2026' : line2Raw
+                  return (
+                    <>
+                      <text x={pos.x + 8} y={pos.y - 9} textAnchor="middle" dominantBaseline="middle"
+                        fill={colors.text} fontSize={compact ? 10.5 : 11.5} fontWeight={600}
+                        fontFamily="'Plus Jakarta Sans', system-ui, sans-serif">
+                        {line1}
+                      </text>
+                      <text x={pos.x + 8} y={pos.y + 7} textAnchor="middle" dominantBaseline="middle"
+                        fill={colors.text} fontSize={compact ? 10.5 : 11.5} fontWeight={600}
+                        fontFamily="'Plus Jakarta Sans', system-ui, sans-serif">
+                        {line2}
+                      </text>
+                    </>
+                  )
+                })()}
+
+                {/* Click hint — subtle "tap" indicator */}
+                {!isSelected && (
+                  <g opacity={0.35}>
+                    <circle cx={pos.x + w / 2 - 10} cy={pos.y - h / 2 + 10} r={6} fill={colors.badge} opacity={0.15} />
+                    <text x={pos.x + w / 2 - 10} y={pos.y - h / 2 + 13} textAnchor="middle" fill={colors.badge} fontSize={8} fontWeight={700}>
+                      +
+                    </text>
+                  </g>
+                )}
               </g>
             )
           })}
         </svg>
       </div>
+
+      {/* ─── Click hint ─── */}
+      {!selectedData && (
+        <p className="text-center text-[11px] text-surface-300 mt-2 animate-fade-up">
+          <span className="inline-flex items-center gap-1">
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 5.227 7.917-3.286-.672zM12 2.25V4.5m5.834.166l-1.591 1.591M20.25 10.5H18M7.757 14.743l-1.59 1.59M6 10.5H3.75m4.007-4.243l-1.59-1.59" />
+            </svg>
+            Click any box to see details
+          </span>
+        </p>
+      )}
 
       {/* ─── Detail Panel ─── */}
       {selectedData && (

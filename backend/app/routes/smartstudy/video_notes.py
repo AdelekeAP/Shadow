@@ -3,6 +3,7 @@ SmartStudy Video Notes Endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from uuid import UUID
 
 from app.database import get_db
@@ -78,10 +79,14 @@ async def create_video_note(
         )
 
         db.add(note)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
         db.refresh(note)
 
-        logger.info(f"📝 Created video note for resource {resource.id}")
+        logger.info(f"Created video note for resource {resource.id}")
 
         return VideoNoteResponse(
             id=note.id,
@@ -99,11 +104,11 @@ async def create_video_note(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating video note: {e}")
+        logger.error(f"Error creating video note: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to create video note"
         )
 
 
@@ -174,10 +179,10 @@ async def get_notes_for_resource(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting video notes: {e}")
+        logger.error(f"Error getting video notes: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to fetch video notes"
         )
 
 
@@ -218,7 +223,11 @@ async def update_video_note(
         if update_data.color is not None:
             note.color = update_data.color
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
         db.refresh(note)
 
         return VideoNoteResponse(
@@ -237,11 +246,11 @@ async def update_video_note(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating video note: {e}")
+        logger.error(f"Error updating video note: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to update video note"
         )
 
 
@@ -271,16 +280,20 @@ async def delete_video_note(
             )
 
         db.delete(note)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Resource already exists")
 
         return {"message": "Note deleted successfully"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting video note: {e}")
+        logger.error(f"Error deleting video note: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to delete video note"
         )

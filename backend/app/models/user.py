@@ -30,6 +30,15 @@ class User(Base):
     locked_until = Column(DateTime(timezone=True), nullable=True)
     token_version = Column(Integer, default=0)
 
+    # Password reset
+    password_reset_token = Column(String(255), nullable=True)
+    password_reset_expires = Column(DateTime(timezone=True), nullable=True)
+
+    # Email verification
+    email_verified = Column(Boolean, default=False)
+    email_verification_token = Column(String(255), nullable=True)
+    email_verification_expires = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     library_contributions = relationship("LibraryDocument", back_populates="uploader")
 
@@ -51,5 +60,6 @@ class User(Base):
             "learning_style": self.learning_style,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_login": self.last_login.isoformat() if self.last_login else None,
-            "is_active": self.is_active
+            "is_active": self.is_active,
+            "email_verified": self.email_verified if self.email_verified is not None else False,
         }
