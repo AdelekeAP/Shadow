@@ -1,0 +1,129 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shadow-backend"
+version = "2.0.0"
+description = "Shadow — Goal-Driven Academic Achievement System for PAU"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.120.0",
+    "uvicorn>=0.38.0",
+    "gunicorn>=22.0.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "alembic>=1.18.0",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.11.0",
+    "python-dotenv>=1.2.0",
+    "PyJWT[crypto]>=2.9.0",
+    "bcrypt>=4.0.0",
+    "passlib>=1.7.4",
+    "python-multipart>=0.0.20",
+    "email-validator>=2.3.0",
+    "openai>=1.55.0",
+    "requests>=2.32.0",
+    "PyPDF2>=3.0.0",
+    "python-pptx>=0.6.21",
+    "lxml>=6.0.0",
+    "Pillow>=12.0.0",
+    "APScheduler>=3.10.0",
+    "pytz>=2024.1",
+    "slowapi>=0.1.9",
+    "redis>=5.2.0",
+    "fpdf2>=2.8.0",
+    "scipy>=1.15.0",
+    "sentry-sdk[fastapi]>=2.19.0",
+    "pyclamd>=0.4.0",
+    "python-json-logger>=4.0.0",
+    "PyYAML>=6.0.0",
+    "Jinja2>=3.1.0",
+    "numpy>=2.3.0",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.9.0",
+    "transformers>=4.57.0",
+    "tokenizers>=0.22.0",
+    "safetensors>=0.6.0",
+]
+dev = [
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
+    "pre-commit>=4.0.0",
+    "pytest>=8.3.0",
+    "pytest-cov>=6.1.0",
+    "pytest-asyncio>=0.24.0",
+    "bandit>=1.9.0",
+    "httpx>=0.28.0",
+]
+
+# ─── Ruff ───────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [
+    "alembic/versions",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    "audio_cache",
+    "library",
+]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "E402",   # module-level import not at top — needed for env setup
+    "RUF012", # mutable class attributes — SQLAlchemy models need this
+    "SIM102", # collapsible if — readability preference
+    "SIM105", # use contextlib.suppress — explicit try/except is clearer
+    "SIM108", # ternary operator — readability preference
+    "B008",   # function call in default arg — FastAPI Depends() pattern
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ─── Mypy ───────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_return_any = false
+warn_unused_configs = true
+exclude = ["alembic/", "venv/", "tests/"]
+
+# ─── Pytest ─────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short --cov=app --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "alembic/*",
+    "tests/*",
+    "venv/*",
+    "app/main.py",
+]
+
+[tool.coverage.report]
+fail_under = 65
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]

@@ -1,0 +1,49 @@
+title = "Shadow Gitleaks Config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+    '''.env\.example''',
+    '''requirements\.txt''',
+    '''.*lock.*''',
+    '''venv/.*''',
+    '''node_modules/.*''',
+    '''staticfiles/.*''',
+    '''\.pre-commit-config\.yaml''',
+]
+regexes = [
+    '''your-.*-here''',
+    '''pk_test_your-.*''',
+    '''sk_test_your-.*''',
+    '''placeholder''',
+    '''example\.com''',
+    '''test-secret-key.*''',
+    '''ci-test-secret-key''',
+]
+
+[[rules]]
+id = "django-secret-key"
+description = "Hardcoded SECRET_KEY"
+regex = '''SECRET_KEY\s*=\s*['"][^'"]{20,}['"]'''
+entropy = 3.5
+tags = ["secret", "django"]
+
+[[rules]]
+id = "database-url-with-password"
+description = "Database URL with credentials"
+regex = '''(?i)(postgres|mysql|mongodb)://[^:]+:[^@]+@'''
+tags = ["secret", "database"]
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API key"
+regex = '''sk-[a-zA-Z0-9]{20,}'''
+tags = ["secret", "api"]
+
+[[rules]]
+id = "elevenlabs-api-key"
+description = "ElevenLabs API key"
+regex = '''(?i)elevenlabs.*=\s*['"]?[a-f0-9]{32}['"]?'''
+tags = ["secret", "api"]
