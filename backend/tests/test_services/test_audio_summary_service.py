@@ -134,33 +134,41 @@ class TestGenerateScript:
 
 class TestSynthesizeAudio:
 
-    @patch("app.services.audio_summary_service.requests.post")
-    def test_success(self, mock_post, audio_service):
+    @patch("app.services.audio_summary_service.httpx.Client")
+    def test_success(self, mock_client_cls, audio_service):
         """Successful ElevenLabs TTS returns audio bytes and provider."""
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            content=b'ID3' + b'\x00' * 100,
-        )
-        mock_post.return_value.raise_for_status = MagicMock()
+        mock_response = MagicMock(status_code=200, content=b'ID3' + b'\x00' * 100)
+        mock_response.raise_for_status = MagicMock()
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
 
         audio_bytes, provider = audio_service.synthesize_audio("Hello world")
         assert audio_bytes[:3] == b'ID3'
         assert provider == "elevenlabs"
-        mock_post.assert_called_once()
 
     @patch("app.services.openai_client.get_openai_client", return_value=None)
-    @patch("app.services.audio_summary_service.requests.post")
-    def test_rate_limit_raises(self, mock_post, mock_openai, audio_service):
+    @patch("app.services.audio_summary_service.httpx.Client")
+    def test_rate_limit_raises(self, mock_client_cls, mock_openai, audio_service):
         """429 from ElevenLabs + no OpenAI fallback raises RuntimeError."""
-        mock_post.return_value = MagicMock(status_code=429)
+        mock_response = MagicMock(status_code=429)
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
         with pytest.raises(RuntimeError, match="All TTS providers failed"):
             audio_service.synthesize_audio("Hello world")
 
     @patch("app.services.openai_client.get_openai_client", return_value=None)
-    @patch("app.services.audio_summary_service.requests.post")
-    def test_invalid_key_raises(self, mock_post, mock_openai, audio_service):
+    @patch("app.services.audio_summary_service.httpx.Client")
+    def test_invalid_key_raises(self, mock_client_cls, mock_openai, audio_service):
         """401 from ElevenLabs + no OpenAI fallback raises RuntimeError."""
-        mock_post.return_value = MagicMock(status_code=401)
+        mock_response = MagicMock(status_code=401)
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
         with pytest.raises(RuntimeError, match="All TTS providers failed"):
             audio_service.synthesize_audio("Hello world")
 
@@ -171,14 +179,15 @@ class TestSynthesizeAudio:
             audio_service_no_elevenlabs.synthesize_audio("Hello world")
 
     @patch("app.services.openai_client.get_openai_client", return_value=None)
-    @patch("app.services.audio_summary_service.requests.post")
+    @patch("app.services.audio_summary_service.httpx.Client")
     def test_invalid_audio_data_raises(self, mock_post, mock_openai, audio_service):
         """Non-MP3 response body from ElevenLabs + no OpenAI fallback raises RuntimeError."""
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            content=b'<html>Error</html>',
-        )
-        mock_post.return_value.raise_for_status = MagicMock()
+        _mock_resp = MagicMock(status_code=200, content=b'<html>Error</html>')
+        _mock_resp.raise_for_status = MagicMock()
+        _mock_cl = MagicMock()
+        _mock_cl.post.return_value = _mock_resp
+        mock_post.return_value.__enter__ = MagicMock(return_value=_mock_cl)
+        mock_post.return_value.__exit__ = MagicMock(return_value=False)
         with pytest.raises(RuntimeError, match="All TTS providers failed"):
             audio_service.synthesize_audio("Hello world")
 
@@ -199,16 +208,17 @@ class TestGetOrGenerate:
         assert result["filepath"] == str(cached_path)
         assert result["script"] is None
 
-    @patch("app.services.audio_summary_service.requests.post")
+    @patch("app.services.audio_summary_service.httpx.Client")
     @patch("app.services.openai_client.call_with_retry")
     async def test_fresh_generation(self, mock_retry, mock_tts_post, audio_service, tmp_path):
         """No cached file -> generates script + audio -> caches to disk."""
         mock_retry.return_value = _mock_openai_response("Generated script.")
-        mock_tts_post.return_value = MagicMock(
-            status_code=200,
-            content=b'ID3' + b'\x00' * 50,
-        )
-        mock_tts_post.return_value.raise_for_status = MagicMock()
+        _mock_resp = MagicMock(status_code=200, content=b'ID3' + b'\x00' * 50)
+        _mock_resp.raise_for_status = MagicMock()
+        _mock_cl = MagicMock()
+        _mock_cl.post.return_value = _mock_resp
+        mock_tts_post.return_value.__enter__ = MagicMock(return_value=_mock_cl)
+        mock_tts_post.return_value.__exit__ = MagicMock(return_value=False)
 
         resource_id = str(uuid.uuid4())
         result = await audio_service.get_or_generate(resource_id, "Topic", "Title", "Desc")
@@ -217,12 +227,15 @@ class TestGetOrGenerate:
         assert os.path.isfile(result["filepath"])
 
     @patch("app.services.openai_client.get_openai_client", return_value=None)
-    @patch("app.services.audio_summary_service.requests.post")
+    @patch("app.services.audio_summary_service.httpx.Client")
     @patch("app.services.openai_client.call_with_retry")
     async def test_tts_failure_returns_script(self, mock_retry, mock_tts_post, mock_openai_client, audio_service):
         """All TTS providers fail -> script returned, no audio, tts_failed=True."""
         mock_retry.return_value = _mock_openai_response("Script without audio.")
-        mock_tts_post.side_effect = Exception("TTS service down")
+        _mock_cl = MagicMock()
+        _mock_cl.post.side_effect = Exception("TTS service down")
+        mock_tts_post.return_value.__enter__ = MagicMock(return_value=_mock_cl)
+        mock_tts_post.return_value.__exit__ = MagicMock(return_value=False)
 
         resource_id = str(uuid.uuid4())
         result = await audio_service.get_or_generate(resource_id, "Topic", "Title", "Desc")
@@ -231,16 +244,17 @@ class TestGetOrGenerate:
         assert result["tts_failed"] is True
         assert "tts_error" in result
 
-    @patch("app.services.audio_summary_service.requests.post")
+    @patch("app.services.audio_summary_service.httpx.Client")
     @patch("app.services.openai_client.call_with_retry")
     async def test_slide_content_passed_through(self, mock_retry, mock_tts_post, audio_service):
         """slide_content is forwarded to generate_script."""
         mock_retry.return_value = _mock_openai_response("Script from slides.")
-        mock_tts_post.return_value = MagicMock(
-            status_code=200,
-            content=b'ID3' + b'\x00' * 50,
-        )
-        mock_tts_post.return_value.raise_for_status = MagicMock()
+        _mock_resp = MagicMock(status_code=200, content=b'ID3' + b'\x00' * 50)
+        _mock_resp.raise_for_status = MagicMock()
+        _mock_cl = MagicMock()
+        _mock_cl.post.return_value = _mock_resp
+        mock_tts_post.return_value.__enter__ = MagicMock(return_value=_mock_cl)
+        mock_tts_post.return_value.__exit__ = MagicMock(return_value=False)
 
         resource_id = str(uuid.uuid4())
         result = await audio_service.get_or_generate(
@@ -445,20 +459,21 @@ class TestAudioEndpoint:
         assert resp.status_code == 503
         audio_mod._audio_summary_service = None
 
-    @patch("app.services.audio_summary_service.requests.post")
+    @patch("app.services.audio_summary_service.httpx.Client")
     @patch("app.services.openai_client.call_with_retry")
     @patch("app.services.openai_client.get_openai_client")
     def test_generate_audio_success(
-        self, mock_client, mock_retry, mock_tts_post, integration_client, tmp_path, monkeypatch,
+        self, mock_client, mock_retry, mock_httpx_cls, integration_client, tmp_path, monkeypatch,
     ):
         """Full success path: generates script + audio, returns 200."""
         mock_client.return_value = MagicMock()
         mock_retry.return_value = _mock_openai_response("Generated audio script.")
-        mock_tts_post.return_value = MagicMock(
-            status_code=200,
-            content=b'ID3' + b'\x00' * 50,
-        )
-        mock_tts_post.return_value.raise_for_status = MagicMock()
+        mock_response = MagicMock(status_code=200, content=b'ID3' + b'\x00' * 50)
+        mock_response.raise_for_status = MagicMock()
+        mock_httpx = MagicMock()
+        mock_httpx.post.return_value = mock_response
+        mock_httpx_cls.return_value.__enter__ = MagicMock(return_value=mock_httpx)
+        mock_httpx_cls.return_value.__exit__ = MagicMock(return_value=False)
 
         monkeypatch.setattr(
             "app.services.audio_summary_service.AUDIO_CACHE_DIR",

@@ -9,7 +9,7 @@ import hashlib
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,73 @@ class ArticleSearchService:
     def is_available(self) -> bool:
         return bool(self.api_key)
 
-    def search_articles(self, topic: str, count: int = 5) -> List[Dict]:
+    def search_articles_sync(self, topic: str, count: int = 5) -> List[Dict]:
+        """Sync version for use inside asyncio.to_thread() contexts."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Already in async context — use httpx sync client directly
+                return self._search_articles_impl(topic, count)
+        except RuntimeError:
+            pass
+        return self._search_articles_impl(topic, count)
+
+    def _search_articles_impl(self, topic: str, count: int = 5) -> List[Dict]:
+        """Internal sync implementation using httpx sync client."""
+        if not self.is_available:
+            return []
+        try:
+            query = f"{topic} tutorial guide"
+            payload = {"q": query, "num": min(count * 2, 20)}
+            headers = {"X-API-KEY": self.api_key, "Content-Type": "application/json"}
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(SERPER_SEARCH_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            results = []
+            for idx, item in enumerate(data.get("organic", [])):
+                url = item.get("link", "")
+                domain = self._extract_domain(url)
+                if domain in EXCLUDED_DOMAINS:
+                    continue
+                quality = self._score_result(item, idx, domain)
+                results.append({"type": "article", "title": item.get("title", f"{topic} article"), "url": url, "description": item.get("snippet", ""), "quality_score": quality, "source": domain})
+                if len(results) >= count:
+                    break
+            results.sort(key=lambda r: r["quality_score"], reverse=True)
+            return results
+        except Exception as e:
+            logger.error(f"Serper sync error: {e}")
+            return []
+
+    def validate_url_sync(self, url: str, timeout: int = 5) -> bool:
+        """Sync version of validate_url."""
+        try:
+            with httpx.Client(timeout=float(timeout)) as client:
+                resp = client.head(url, follow_redirects=True)
+            return resp.status_code < 400
+        except Exception:
+            return False
+
+    def search_and_validate_sync(self, topic: str, count: int = 5) -> List[Dict]:
+        """Sync version of search_and_validate."""
+        articles = self.search_articles_sync(topic, count=count + 2)
+        validated = []
+        for article in articles:
+            if self.validate_url_sync(article["url"]):
+                validated.append(article)
+                if len(validated) >= count:
+                    break
+        if len(validated) < count and len(articles) > len(validated):
+            for article in articles:
+                if article not in validated:
+                    validated.append(article)
+                    if len(validated) >= count:
+                        break
+        return validated[:count]
+
+    async def search_articles(self, topic: str, count: int = 5) -> List[Dict]:
         """
         Search Google via Serper for real article URLs about a topic.
 
@@ -82,7 +148,8 @@ class ArticleSearchService:
                 "Content-Type": "application/json",
             }
 
-            resp = requests.post(SERPER_SEARCH_URL, json=payload, headers=headers, timeout=10)
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(SERPER_SEARCH_URL, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
 
@@ -113,28 +180,32 @@ class ArticleSearchService:
             logger.info(f"Serper found {len(results)} articles for '{topic}'")
             return results
 
-        except requests.RequestException as e:
-            logger.error(f"Serper API error: {e}")
+        except httpx.TimeoutException:
+            logger.error(f"Serper API timeout for '{topic}'")
+            return []
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Serper API HTTP error: {e.response.status_code}")
             return []
         except Exception as e:
             logger.error(f"Serper unexpected error: {e}")
             return []
 
-    def validate_url(self, url: str, timeout: int = 5) -> bool:
+    async def validate_url(self, url: str, timeout: int = 5) -> bool:
         """Quick HEAD check that the URL is reachable."""
         try:
-            resp = requests.head(url, timeout=timeout, allow_redirects=True)
+            async with httpx.AsyncClient(timeout=float(timeout)) as client:
+                resp = await client.head(url, follow_redirects=True)
             return resp.status_code < 400
         except Exception:
             return False
 
-    def search_and_validate(self, topic: str, count: int = 5) -> List[Dict]:
+    async def search_and_validate(self, topic: str, count: int = 5) -> List[Dict]:
         """Search for articles, then validate top results."""
-        articles = self.search_articles(topic, count=count + 2)
+        articles = await self.search_articles(topic, count=count + 2)
 
         validated = []
         for article in articles:
-            if self.validate_url(article["url"]):
+            if await self.validate_url(article["url"]):
                 validated.append(article)
                 if len(validated) >= count:
                     break
@@ -152,20 +223,10 @@ class ArticleSearchService:
         return validated[:count]
 
     def _score_result(self, item: Dict, position: int, domain: str) -> float:
-        """
-        Score a search result for quality.
-
-        Factors:
-        - Domain whitelist boost
-        - Position bonus (top result +10, decaying)
-        """
-        # Base score
+        """Score a search result for quality."""
         score = HIGH_QUALITY_DOMAINS.get(domain, 70.0)
-
-        # Position bonus: top result +10, second +7, third +5, etc.
         position_bonus = max(0, 10 - position * 3)
         score += position_bonus
-
         return min(100.0, max(0.0, score))
 
     @staticmethod
@@ -215,7 +276,6 @@ def get_cached_articles(topic: str, db=None) -> Optional[List[Dict]]:
                     "quality_score": float(r.quality_score),
                     "source": r.author or "",
                 } for r in cached]
-                # Also populate in-memory cache
                 _article_cache[cache_key] = {
                     "articles": articles,
                     "expires_at": datetime.now(timezone.utc) + _CACHE_TTL,
@@ -244,7 +304,6 @@ def cache_articles(topic: str, articles: List[Dict], db=None):
         try:
             from app.models.content_curation import CuratedResource
             for article in articles:
-                # Check if already cached
                 existing = db.query(CuratedResource).filter(
                     CuratedResource.url == article["url"],
                     CuratedResource.resource_type == "article",

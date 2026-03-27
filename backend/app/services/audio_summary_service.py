@@ -13,7 +13,7 @@ import logging
 from typing import Optional
 from dotenv import load_dotenv
 
-import requests
+import httpx
 
 load_dotenv()
 
@@ -170,7 +170,9 @@ Output only the script text, nothing else."""
             }
         }
 
-        response = requests.post(url, json=payload, headers=headers, timeout=120)
+        import httpx
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(url, json=payload, headers=headers)
 
         if response.status_code == 401:
             raise RuntimeError("Invalid ElevenLabs API key")

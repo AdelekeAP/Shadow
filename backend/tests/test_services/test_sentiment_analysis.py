@@ -21,7 +21,11 @@ from app.services.sentiment_analysis import (
     analyze_sentiment,
     get_sentiment_description,
     batch_analyze_sentiments,
+    _model_ready,
 )
+
+# Ensure _model_ready is set so mocked tests can proceed
+_model_ready.set()
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +57,8 @@ class TestAnalyzeSentimentMocked:
     """Mock the module-level sentiment_analyzer to simulate a loaded model."""
 
     def test_high_confidence_positive(self):
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.return_value = [{"label": "POSITIVE", "score": 0.95}]
             result = analyze_sentiment("I love this course!")
             assert result is not None
@@ -62,7 +67,8 @@ class TestAnalyzeSentimentMocked:
             assert result["label"] == "POSITIVE"
 
     def test_low_confidence_positive_returns_neutral(self):
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.return_value = [{"label": "POSITIVE", "score": 0.55}]
             result = analyze_sentiment("It was okay I guess")
             assert result is not None
@@ -71,7 +77,8 @@ class TestAnalyzeSentimentMocked:
             assert result["label"] == "POSITIVE"
 
     def test_high_confidence_negative(self):
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.return_value = [{"label": "NEGATIVE", "score": 0.92}]
             result = analyze_sentiment("This is terrible")
             assert result is not None
@@ -80,7 +87,8 @@ class TestAnalyzeSentimentMocked:
             assert result["label"] == "NEGATIVE"
 
     def test_low_confidence_negative_returns_neutral(self):
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.return_value = [{"label": "NEGATIVE", "score": 0.6}]
             result = analyze_sentiment("Meh, not the best")
             assert result is not None
@@ -89,7 +97,8 @@ class TestAnalyzeSentimentMocked:
             assert result["label"] == "NEGATIVE"
 
     def test_exception_in_model_returns_none(self):
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.side_effect = RuntimeError("Model crashed")
             result = analyze_sentiment("Some text here")
             assert result is None
@@ -97,7 +106,8 @@ class TestAnalyzeSentimentMocked:
     def test_long_text_is_truncated_before_model_call(self):
         """The function slices text to 512 chars; verify the model is still called."""
         long_text = "x" * 1000
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.return_value = [{"label": "POSITIVE", "score": 0.8}]
             result = analyze_sentiment(long_text)
             # Model should have been called with truncated text (512 chars)
@@ -108,7 +118,8 @@ class TestAnalyzeSentimentMocked:
 
     def test_boundary_confidence_exactly_0_7_is_neutral(self):
         """Confidence == 0.7 is NOT > 0.7, so score should be 0 (neutral)."""
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.return_value = [{"label": "POSITIVE", "score": 0.7}]
             result = analyze_sentiment("boundary test")
             assert result["sentiment_score"] == 0
@@ -146,7 +157,8 @@ class TestBatchAnalyzeSentiments:
         assert len(results) == 3
 
     def test_mocked_model_processes_each_text(self):
-        with patch("app.services.sentiment_analysis.sentiment_analyzer") as mock_analyzer:
+        with patch("app.services.sentiment_analysis._sentiment_analyzer") as mock_analyzer, \
+             patch("app.services.sentiment_analysis._model_disabled", False):
             mock_analyzer.return_value = [{"label": "POSITIVE", "score": 0.9}]
             texts = ["great", "awesome"]
             results = batch_analyze_sentiments(texts)
