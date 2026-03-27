@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 /* ─── Grade system (PAU 5.0 scale) — Deep gemstone tones ───
@@ -19,7 +19,7 @@ const getGradeLetter = (gp) => gradeConfig(gp).letter
 /* ═══════════════════════════════════════
    CourseCarousel
    ═══════════════════════════════════════ */
-export default function CourseCarousel({ enrolledCourses, onCourseClick }) {
+const CourseCarousel = memo(function CourseCarousel({ enrolledCourses, onCourseClick }) {
   const navigate = useNavigate()
   const scrollRef = useRef(null)
   const [isPaused, setIsPaused] = useState(false)
@@ -219,4 +219,6 @@ export default function CourseCarousel({ enrolledCourses, onCourseClick }) {
       </div>
     </div>
   )
-}
+})
+
+export default CourseCarousel

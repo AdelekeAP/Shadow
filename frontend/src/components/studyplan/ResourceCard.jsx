@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, memo } from 'react'
 import { createVideoNote, getVideoNotes, deleteVideoNote, reportBrokenResource, API_BASE_URL } from '../../services/api'
 import { linkifyText, getNoteColorClass, getNoteTypeIcon, getResourceStyle, getYouTubeVideoId } from './studyPlanHelpers.jsx'
 
-export default function ResourceCard({ resource, onPlayFullScreen, compact = false }) {
+const ResourceCard = memo(function ResourceCard({ resource, onPlayFullScreen, compact = false }) {
   const [isExpanded, setIsExpanded] = useState(!compact)
   const [isVideoLoaded, setIsVideoLoaded] = useState(false)
   const [reported, setReported] = useState(!!resource.report_reason)
@@ -441,4 +441,6 @@ export default function ResourceCard({ resource, onPlayFullScreen, compact = fal
 
     </div>
   )
-}
+})
+
+export default ResourceCard
