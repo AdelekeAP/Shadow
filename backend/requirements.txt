@@ -41,7 +41,6 @@ sympy==1.14.0
 tokenizers==0.22.1
 # torch + transformers: required by sentiment_analysis.py (mood feature).
 # The DistilBERT model loaded via transformers.pipeline() needs torch as its backend.
-# Both can be skipped at runtime by setting DISABLE_ML_MODELS=true.
 torch==2.9.1
 tqdm==4.67.1
 transformers==4.57.1
@@ -80,7 +79,7 @@ sentry-sdk[fastapi]==2.19.2
 # Virus scanning
 pyclamd==0.4.0
 
-# Testing & Quality
-pytest==8.3.5
-pytest-cov==6.1.1
-bandit==1.9.0
+# Testing & Quality (dev only — not needed in production Docker image)
+# pytest==8.3.5
+# pytest-cov==6.1.1
+# bandit==1.9.4
