@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/adelekeap/shadow
+
 jobs:
   test:
     uses: ./.github/workflows/ci.yml
@@ -30,46 +34,24 @@ jobs:
 
       - name: Build and push backend
         uses: docker/build-push-action@v5
+        continue-on-error: true
         with:
           context: ./backend
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ github.repository }}/backend:latest
-            ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/backend:latest
+            ${{ env.IMAGE_PREFIX }}/backend:${{ github.sha }}
 
       - name: Build and push frontend
         uses: docker/build-push-action@v5
+        continue-on-error: true
         with:
           context: ./frontend
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ github.repository }}/frontend:latest
-            ghcr.io/${{ github.repository }}/frontend:${{ github.sha }}
-
-  # Uncomment when server is ready:
-  # deploy:
-  #   needs: build-and-push
-  #   runs-on: ubuntu-latest
-  #   environment: production
-  #   steps:
-  #     - name: Deploy to server
-  #       uses: appleboy/ssh-action@v1
-  #       with:
-  #         host: ${{ secrets.DEPLOY_HOST }}
-  #         username: ${{ secrets.DEPLOY_USER }}
-  #         key: ${{ secrets.DEPLOY_KEY }}
-  #         script: |
-  #           cd /opt/shadow
-  #           docker compose pull
-  #           docker compose up -d --remove-orphans
-  #           docker compose exec -T backend alembic upgrade head
-  #           sleep 5
-  #           for i in 1 2 3 4 5; do
-  #             curl -sf http://localhost:8000/health && echo "Health OK" && exit 0
-  #             echo "Retry $i..." && sleep 5
-  #           done
-  #           echo "Health check failed" && exit 1
+            ${{ env.IMAGE_PREFIX }}/frontend:latest
+            ${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }}
