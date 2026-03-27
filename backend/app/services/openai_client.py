@@ -72,7 +72,7 @@ def get_openai_client() -> Optional[OpenAI]:
             logger.warning("OPENAI_API_KEY not found in environment variables")
             return None
         try:
-            _client = OpenAI(api_key=api_key)
+            _client = OpenAI(api_key=api_key, timeout=60.0)
             logger.info("OpenAI client initialized (shared singleton)")
             return _client
         except Exception as e:

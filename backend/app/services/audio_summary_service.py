@@ -202,6 +202,7 @@ Output only the script text, nothing else."""
             voice=OPENAI_TTS_VOICE,
             input=script,
             response_format="mp3",
+            timeout=60.0,
         )
 
         audio_bytes = response.content
@@ -258,9 +259,9 @@ Output only the script text, nothing else."""
         # Generate script
         script = await self.generate_script(topic, title, description, slide_content)
 
-        # Synthesize audio with automatic fallback
+        # Synthesize audio with automatic fallback (run in thread to avoid blocking event loop)
         try:
-            audio_bytes, provider_used = self.synthesize_audio(script, provider=provider)
+            audio_bytes, provider_used = await asyncio.to_thread(self.synthesize_audio, script, provider)
         except Exception as tts_err:
             logger.warning(f"All TTS synthesis failed, returning script only: {tts_err}")
             return {"filepath": None, "script": script, "tts_failed": True, "tts_error": str(tts_err)}

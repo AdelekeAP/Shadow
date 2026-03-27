@@ -27,7 +27,7 @@ router.include_router(diagrams_router)
 
 
 @router.get("/audio/{filename}", operation_id="serve_audio_file", summary="Serve cached audio MP3")
-async def serve_audio(filename: str, current_user: User = Depends(get_current_user)):
+async def serve_audio(filename: str):
     """Serve a generated audio summary MP3 file."""
     # Sanitize filename to prevent path traversal
     safe_name = os.path.basename(filename)
