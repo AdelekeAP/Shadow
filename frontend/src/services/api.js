@@ -10,7 +10,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 90000,
+  timeout: 30000,
   withCredentials: true, // Send HttpOnly refresh_token cookie automatically
   headers: {
     'Content-Type': 'application/json'

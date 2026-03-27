@@ -1,29 +1,52 @@
 """
 Sentiment Analysis Service
-Uses Hugging Face DistilBERT for analyzing mood notes
+Uses Hugging Face DistilBERT for analyzing mood notes.
+Model loads in a background thread so it never blocks app startup or requests.
 """
-from transformers import pipeline
 from typing import Optional, Dict
 import logging
 import os
+import threading
 
 logger = logging.getLogger(__name__)
 
-# Initialize the sentiment analysis pipeline
-# Using distilbert-base-uncased-finetuned-sst-2-english as specified
-# Can be disabled with DISABLE_ML_MODELS=true for faster startup
-sentiment_analyzer = None
-if os.getenv("DISABLE_ML_MODELS", "").lower() != "true":
+# Model loads in background — requests served immediately, sentiment returns None until ready
+_sentiment_analyzer = None
+_model_ready = threading.Event()
+_model_disabled = os.getenv("DISABLE_ML_MODELS", "").lower() == "true"
+
+
+def _load_model():
+    """Load the sentiment model in a background thread. Imports transformers lazily."""
+    global _sentiment_analyzer
     try:
-        sentiment_analyzer = pipeline(
+        import importlib
+        transformers = importlib.import_module("transformers")
+        _sentiment_analyzer = transformers.pipeline(
             "sentiment-analysis",
             model="distilbert-base-uncased-finetuned-sst-2-english"
         )
         logger.info("Sentiment analysis model loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load sentiment analysis model: {e}")
-        sentiment_analyzer = None
+        _sentiment_analyzer = None
+    finally:
+        _model_ready.set()
+
+
+# Start loading AFTER the app is fully imported — use a short delay
+# so gunicorn workers can start accepting requests immediately
+if not _model_disabled:
+    def _deferred_load():
+        import time
+        time.sleep(2)  # Let the worker finish startup first
+        _load_model()
+
+    _loader = threading.Thread(target=_deferred_load, daemon=True)
+    _loader.start()
+    logger.info("Sentiment analysis model will load in background")
 else:
+    _model_ready.set()
     logger.info("Sentiment analysis disabled via DISABLE_ML_MODELS")
 
 
@@ -31,37 +54,23 @@ def analyze_sentiment(text: str) -> Optional[Dict]:
     """
     Analyze sentiment of text using Hugging Face DistilBERT
 
-    Args:
-        text: The text to analyze (mood note)
-
-    Returns:
-        Dict with:
-        - sentiment_score: -1 (negative), 0 (neutral), 1 (positive)
-        - confidence: float between 0 and 1
-        - label: "POSITIVE" or "NEGATIVE"
-
-        Returns None if analysis fails
+    Returns None immediately if model isn't loaded yet (non-blocking).
     """
     if not text or not text.strip():
         return None
 
-    if not sentiment_analyzer:
-        logger.warning("Sentiment analyzer not available")
+    if _model_disabled or not _model_ready.is_set() or not _sentiment_analyzer:
         return None
 
     try:
-        # Run sentiment analysis
-        result = sentiment_analyzer(text[:512])[0]  # Limit to 512 chars for model
+        result = _sentiment_analyzer(text[:512])[0]
 
         label = result['label']
         confidence = result['score']
 
-        # Convert to -1, 0, 1 scale
         if label == "POSITIVE":
-            # High confidence positive = 1, low confidence = 0 (neutral)
             sentiment_score = 1 if confidence > 0.7 else 0
-        else:  # NEGATIVE
-            # High confidence negative = -1, low confidence = 0 (neutral)
+        else:
             sentiment_score = -1 if confidence > 0.7 else 0
 
         return {
@@ -76,15 +85,7 @@ def analyze_sentiment(text: str) -> Optional[Dict]:
 
 
 def get_sentiment_description(sentiment_score: int) -> str:
-    """
-    Get human-readable description of sentiment score
-
-    Args:
-        sentiment_score: -1, 0, or 1
-
-    Returns:
-        String description
-    """
+    """Get human-readable description of sentiment score"""
     descriptions = {
         -1: "Negative sentiment detected",
         0: "Neutral sentiment",
@@ -94,20 +95,5 @@ def get_sentiment_description(sentiment_score: int) -> str:
 
 
 def batch_analyze_sentiments(texts: list[str]) -> list[Optional[Dict]]:
-    """
-    Analyze sentiment for multiple texts
-
-    Args:
-        texts: List of text strings to analyze
-
-    Returns:
-        List of sentiment analysis results (or None for each failed analysis)
-    """
-    if not sentiment_analyzer:
-        return [None] * len(texts)
-
-    results = []
-    for text in texts:
-        results.append(analyze_sentiment(text))
-
-    return results
+    """Analyze sentiment for multiple texts"""
+    return [analyze_sentiment(text) for text in texts]
