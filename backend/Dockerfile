@@ -9,10 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-# Install CPU-only torch first (skip 2GB CUDA libraries), then the rest
-RUN pip install --no-cache-dir --prefix=/install \
-    torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir --prefix=/install -r requirements.txt
+# Install all deps (torch is CPU-only via --extra-index-url in requirements.txt)
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Production stage
 FROM python:3.13-slim
