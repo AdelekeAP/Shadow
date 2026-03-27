@@ -74,4 +74,20 @@ serviceaccount.json
 *_REVIEW*.md
 *_REPORT*.md
 *_SUMMARY*.md
+*_ASSESSMENT*.md
 FIX_SUMMARY_QUICK_REFERENCE.md
+
+# Test artifacts
+frontend/coverage/
+frontend/test-results/
+frontend/e2e/screenshots/
+backend/test-results/
+
+# Personal/uploaded documents
+*.docx
+*.pptx
+
+# Claude/tool config
+backend/.claude/
+docs/plans/
+docs/superpowers/
