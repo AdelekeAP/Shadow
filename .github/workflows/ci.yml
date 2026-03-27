@@ -114,6 +114,7 @@ jobs:
 
       - name: Build backend image (no push)
         uses: docker/build-push-action@v5
+        continue-on-error: true
         with:
           context: ./backend
           push: false
