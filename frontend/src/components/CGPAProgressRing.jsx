@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, memo } from 'react'
 
 /**
  * Animated circular progress ring showing CGPA progress toward target
  * Uses SVG stroke-dashoffset animation
  */
-export default function CGPAProgressRing({ currentCGPA = 0, targetCGPA = 5.0, maxScale = 5.0, size = 160 }) {
+const CGPAProgressRing = memo(function CGPAProgressRing({ currentCGPA = 0, targetCGPA = 5.0, maxScale = 5.0, size = 160 }) {
   const [animatedOffset, setAnimatedOffset] = useState(null)
 
   const strokeWidth = 10
@@ -76,4 +76,6 @@ export default function CGPAProgressRing({ currentCGPA = 0, targetCGPA = 5.0, ma
       </div>
     </div>
   )
-}
+})
+
+export default CGPAProgressRing

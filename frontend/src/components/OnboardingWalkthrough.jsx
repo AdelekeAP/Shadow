@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 /* ─── Walkthrough Steps ─── */
@@ -86,7 +86,7 @@ const STEPS = [
 
 const STORAGE_KEY = 'shadow_onboarding_complete'
 
-export default function OnboardingWalkthrough({ userName }) {
+const OnboardingWalkthrough = memo(function OnboardingWalkthrough({ userName }) {
   const [currentStep, setCurrentStep] = useState(0)
   const [isVisible, setIsVisible] = useState(false)
   const [direction, setDirection] = useState(1) // 1 = forward, -1 = backward
@@ -288,4 +288,6 @@ export default function OnboardingWalkthrough({ userName }) {
       </div>
     </div>
   )
-}
+})
+
+export default OnboardingWalkthrough
