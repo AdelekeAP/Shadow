@@ -97,7 +97,7 @@ function RegisterPage() {
 
           <form onSubmit={handleSubmit} className="space-y-3.5">
             <Field label="Full name">
-              <input type="text" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} required autoComplete="name" className={inputCls} placeholder="Paul Adeleke" />
+              <input type="text" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} required autoComplete="name" className={inputCls} placeholder="Full Name" />
             </Field>
 
             <Field label="Email">
