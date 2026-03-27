@@ -11,6 +11,7 @@ import SmartStudyChat from '../components/SmartStudyChat'
 import SmartStudyTriggerBanner from '../components/SmartStudyTriggerBanner'
 import EditCourseScoresModal from '../components/EditCourseScoresModal'
 import NotificationBell from '../components/NotificationBell'
+import OnboardingWalkthrough from '../components/OnboardingWalkthrough'
 
 /* ─── helpers ─── */
 const greetByTime = () => {
@@ -188,6 +189,9 @@ function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-surface-50">
+
+      {/* ══════════ ONBOARDING ══════════ */}
+      <OnboardingWalkthrough userName={user?.full_name} />
 
       {/* ══════════ NAV ══════════ */}
       <nav className="sticky top-0 z-40 border-b border-surface-200/80 bg-white/80 backdrop-blur-xl">
