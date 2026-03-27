@@ -6,7 +6,7 @@ export default function AudioPlayer({ planId, resource, topic, activityDescripti
   const hasExistingAudio = !!(resource?.audio_url)
   const [state, setState] = useState(hasExistingAudio ? 'ready' : 'idle') // idle | loading | ready | error
   const [audioUrl, setAudioUrl] = useState(resource?.audio_url || null)
-  const [script, setScript] = useState(null)
+  const [script, setScript] = useState(resource?.audio_script || null)
   const [showScript, setShowScript] = useState(false)
   const [durationEstimate, setDurationEstimate] = useState(null)
   const audioRef = useRef(null)

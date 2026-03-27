@@ -212,6 +212,7 @@ class StudyPlanResource(Base):
             "reported_at": self.reported_at.isoformat() if self.reported_at else None,
             "has_audio": self.audio_file_path is not None,
             "audio_url": f"/api/v1/smartstudy/audio/{self.audio_file_path}" if self.audio_file_path else None,
+            "audio_script": self.audio_script,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

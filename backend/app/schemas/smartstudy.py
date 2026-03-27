@@ -91,6 +91,7 @@ class StudyPlanResourceResponse(BaseModel):
     reported_at: Optional[datetime] = None
     has_audio: bool = False
     audio_url: Optional[str] = None
+    audio_script: Optional[str] = None
     created_at: datetime
 
     class Config:
