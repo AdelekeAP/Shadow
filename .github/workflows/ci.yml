@@ -2,7 +2,7 @@ name: Shadow CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, develop]
   pull_request:
     branches: [main]
   workflow_call:
@@ -21,8 +21,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies
-        run: cd backend && uv sync --all-extras
+      - name: Install dev dependencies (no ML)
+        run: cd backend && uv sync --extra dev
 
       - name: Ruff check
         run: cd backend && uv run ruff check .
@@ -51,8 +51,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies
-        run: cd backend && uv sync --all-extras
+      - name: Install dependencies (no ML for CI speed)
+        run: cd backend && uv sync --extra dev
 
       - name: FastAPI import check
         run: cd backend && uv run python -c "from app.main import app; print('OK')"
