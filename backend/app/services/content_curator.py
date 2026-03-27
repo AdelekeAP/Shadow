@@ -8,7 +8,11 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
 
 from app.services.youtube_service import get_youtube_service
-from app.services.reddit_service import get_reddit_service
+
+try:
+    from app.services.reddit_service import get_reddit_service
+except ImportError:
+    get_reddit_service = lambda: None  # praw not installed
 
 logger = logging.getLogger(__name__)
 
