@@ -2,6 +2,8 @@
 Content Curation API Routes
 Endpoints for accessing YouTube and Reddit curated learning resources
 """
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -56,12 +58,13 @@ async def curate_resources(
 
         curator = get_content_curator()
 
-        # Curate resources
-        results = curator.curate_resources(
+        # Curate resources (run in thread to avoid blocking event loop)
+        results = await asyncio.to_thread(
+            curator.curate_resources,
             topic=body.topic,
             learning_style=body.learning_style,
             max_results=body.max_results,
-            min_quality_score=body.min_quality_score
+            min_quality_score=body.min_quality_score,
         )
 
         return {
@@ -105,10 +108,11 @@ async def search_resources(
 
         curator = get_content_curator()
 
-        # Search for resources
-        results = curator.search_specific_resource(
+        # Search for resources (run in thread to avoid blocking event loop)
+        results = await asyncio.to_thread(
+            curator.search_specific_resource,
             query=query,
-            resource_type=resource_type
+            resource_type=resource_type,
         )
 
         return {
