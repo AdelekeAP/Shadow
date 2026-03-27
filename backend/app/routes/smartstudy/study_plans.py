@@ -318,8 +318,10 @@ async def create_study_plan_with_upload(
 
                 # Read back for library contribution only if needed
                 if uploaded_file:
-                    with open(temp_file_path, "rb") as f:
-                        file_content_bytes = f.read()
+                    def _read_file():
+                        with open(temp_file_path, "rb") as f:
+                            return f.read()
+                    file_content_bytes = await asyncio.to_thread(_read_file)
 
                 # Virus scan the uploaded file before processing
                 try:
@@ -416,7 +418,8 @@ async def create_study_plan_with_upload(
         if uploaded_file and course_id:
             logger.info(f"Saving document to library (public={is_school_material})...")
 
-            library_result = contribute_to_library(
+            library_result = await asyncio.to_thread(
+                contribute_to_library,
                 db=db,
                 user_id=str(current_user.id),
                 course_id=course_id,
@@ -426,8 +429,8 @@ async def create_study_plan_with_upload(
                 file_type=file_ext,
                 extracted_text=slide_content or "",
                 week_number=week_number,
-                key_topics=[],  # Could extract from AI analysis later
-                is_public=is_school_material  # Private unless explicitly shared
+                key_topics=[],
+                is_public=is_school_material,
             )
 
             if library_result.get("success"):
