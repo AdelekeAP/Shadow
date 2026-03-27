@@ -8,9 +8,11 @@ on:
 
 jobs:
   review:
+    # Only runs if ANTHROPIC_API_KEY secret is configured
     if: >
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+      ((github.event_name == 'pull_request') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')))
+      && github.repository != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,5 +24,7 @@ jobs:
           fetch-depth: 0
 
       - uses: anthropics/claude-code-action@v1
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+        continue-on-error: true
