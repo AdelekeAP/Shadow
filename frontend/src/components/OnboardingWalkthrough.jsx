@@ -179,7 +179,7 @@ export default function OnboardingWalkthrough({ userName }) {
         {/* Step number watermark */}
         <div className="absolute -top-8 -left-4 sm:-left-8 select-none pointer-events-none">
           <span
-            className="font-display text-[7rem] sm:text-[9rem] font-bold leading-none tracking-tighter"
+            className="font-display text-[5rem] sm:text-[7rem] md:text-[9rem] font-bold leading-none tracking-tighter"
             style={{
               background: `linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))`,
               WebkitBackgroundClip: 'text',
