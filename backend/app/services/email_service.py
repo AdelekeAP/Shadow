@@ -45,32 +45,36 @@ def _smtp_configured() -> bool:
 
 
 def _send_email(to: str, subject: str, html_body: str) -> bool:
-    """Send an email via SMTP, or log in dev mode."""
+    """Send an email via SMTP in a background thread (never blocks the request)."""
     if not _smtp_configured():
         logger.info(
             "SMTP not configured — email would be sent:\n"
-            "  To: %s\n  Subject: %s\n  Body:\n%s",
-            to, subject, html_body,
+            "  To: %s\n  Subject: %s",
+            to, subject,
         )
         return True
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = FROM_EMAIL
-        msg["To"] = to
-        msg.attach(MIMEText(html_body, "html"))
+    import threading
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.sendmail(FROM_EMAIL, to, msg.as_string())
+    def _do_send():
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = FROM_EMAIL
+            msg["To"] = to
+            msg.attach(MIMEText(html_body, "html"))
 
-        logger.info("Email sent to %s: %s", to, subject)
-        return True
-    except Exception as e:
-        logger.error("Failed to send email to %s: %s", to, e)
-        return False
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+                server.starttls()
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.sendmail(FROM_EMAIL, to, msg.as_string())
+
+            logger.info("Email sent to %s: %s", to, subject)
+        except Exception as e:
+            logger.error("Failed to send email to %s: %s", to, e)
+
+    threading.Thread(target=_do_send, daemon=True).start()
+    return True
 
 
 # ---------------------------------------------------------------------------
