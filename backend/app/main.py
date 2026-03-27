@@ -55,6 +55,36 @@ async def lifespan(app: FastAPI):
         else:
             logger.info(f"  {svc}: not configured")
 
+    # Auto-create database tables if they don't exist
+    try:
+        from app.database import engine, Base
+        import app.models  # noqa: F401 — register all models
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables verified/created")
+    except Exception as e:
+        logger.error(f"Failed to create database tables: {e}")
+
+    # Seed PAU courses if the courses table is empty
+    try:
+        from app.database import SessionLocal
+        from app.models.course import Course
+        db = SessionLocal()
+        if db.query(Course).count() == 0:
+            # Import the seed script from project root
+            import importlib.util
+            seed_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "seed_courses.py")
+            if os.path.exists(seed_path):
+                spec = importlib.util.spec_from_file_location("seed_courses", seed_path)
+                seed_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(seed_mod)
+                seed_mod.seed_courses()
+                logger.info("Seeded PAU courses")
+            else:
+                logger.warning(f"seed_courses.py not found at {seed_path}")
+        db.close()
+    except Exception as e:
+        logger.warning(f"Course seeding skipped: {e}")
+
     # Start notification scheduler
     try:
         from app.services.notification_scheduler import start_scheduler
