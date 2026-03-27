@@ -468,7 +468,7 @@ class ResourceFinder:
                 from app.services.article_search_service import get_article_search_service
                 search_service = get_article_search_service()
                 if search_service.is_available:
-                    doc_results = search_service.search_and_validate(
+                    doc_results = search_service.search_and_validate_sync(
                         f"{topic} official documentation reference guide",
                         count=3
                     )
@@ -512,7 +512,7 @@ class ResourceFinder:
         # 2. Try Serper search for real URLs
         search_service = get_article_search_service()
         if search_service.is_available:
-            articles = search_service.search_and_validate(topic, count=5)
+            articles = search_service.search_and_validate_sync(topic, count=5)
             if articles:
                 if db:
                     cache_articles(topic, articles, db=db)
@@ -576,7 +576,7 @@ class ResourceFinder:
             from app.services.article_search_service import get_article_search_service
             search_service = get_article_search_service()
             if search_service.is_available:
-                practice_articles = search_service.search_and_validate(
+                practice_articles = search_service.search_and_validate_sync(
                     f"{topic} practice problems exercises tutorial",
                     count=3
                 )
@@ -644,7 +644,7 @@ class ResourceFinder:
                 from app.services.article_search_service import get_article_search_service
                 search_service = get_article_search_service()
                 if search_service.is_available:
-                    interactive_results = search_service.search_and_validate(
+                    interactive_results = search_service.search_and_validate_sync(
                         f"{topic} interactive tutorial learn online course",
                         count=3
                     )

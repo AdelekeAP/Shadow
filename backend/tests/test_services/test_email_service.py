@@ -101,7 +101,7 @@ class TestSendEmail:
 
     @patch("app.services.email_service.smtplib.SMTP")
     def test_send_with_smtp_failure(self, mock_smtp_class, monkeypatch):
-        """Returns False when SMTP raises an exception."""
+        """Returns True (fire-and-forget) even when SMTP would fail in background."""
         monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
         monkeypatch.setenv("SMTP_PORT", "587")
         monkeypatch.setenv("SMTP_USERNAME", "user@example.com")
@@ -116,9 +116,9 @@ class TestSendEmail:
         )
         mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
 
+        # _send_email now always returns True immediately (async background send)
         result = mod._send_email("test@pau.edu.ng", "Test", "<p>Hello</p>")
-
-        assert result is False
+        assert result is True
 
 
 # ---------------------------------------------------------------------------
