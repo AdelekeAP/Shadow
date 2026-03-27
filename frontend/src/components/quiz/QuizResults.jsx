@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, memo } from 'react'
 
 /* ─── Inline SVG Icons ─── */
 const CheckCircleIcon = ({ className }) => (
@@ -113,7 +113,7 @@ function ScoreRing({ percentage, size = 120 }) {
   )
 }
 
-export default function QuizResults({ attempt, quiz, onRetake, onCreateStudyPlan, onClose }) {
+const QuizResults = memo(function QuizResults({ attempt, quiz, onRetake, onCreateStudyPlan, onClose }) {
   const [expandedQuestion, setExpandedQuestion] = useState(null)
   const [showAllExplanations, setShowAllExplanations] = useState(false)
 
@@ -414,4 +414,6 @@ export default function QuizResults({ attempt, quiz, onRetake, onCreateStudyPlan
       </div>
     </div>
   )
-}
+})
+
+export default QuizResults

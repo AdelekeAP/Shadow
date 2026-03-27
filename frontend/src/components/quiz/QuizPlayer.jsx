@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { submitQuiz } from '../../services/api'
 
 /* ─── Inline SVG Icons ─── */
@@ -66,7 +66,7 @@ function shuffleArray(arr) {
   return shuffled
 }
 
-export default function QuizPlayer({ quiz, onComplete, onCancel }) {
+const QuizPlayer = memo(function QuizPlayer({ quiz, onComplete, onCancel }) {
   const [started, setStarted] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [answers, setAnswers] = useState(new Map())
@@ -579,4 +579,6 @@ export default function QuizPlayer({ quiz, onComplete, onCancel }) {
       )}
     </div>
   )
-}
+})
+
+export default QuizPlayer

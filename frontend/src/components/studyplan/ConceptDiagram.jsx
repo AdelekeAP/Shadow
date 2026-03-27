@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, memo } from 'react'
 
 /* ═══════════════════════════════════════════════════════════════
    ConceptDiagram — Interactive SVG concept diagram renderer
@@ -151,7 +151,7 @@ const TYPE_ICONS = {
 
 /* ═══════════════════════════════════════ */
 
-export default function ConceptDiagram({ diagram, compact = false, className = '' }) {
+const ConceptDiagram = memo(function ConceptDiagram({ diagram, compact = false, className = '' }) {
   const [selectedNode, setSelectedNode] = useState(null)
 
   const { positions, viewBox } = useMemo(() => {
@@ -417,4 +417,6 @@ export default function ConceptDiagram({ diagram, compact = false, className = '
       )}
     </div>
   )
-}
+})
+
+export default ConceptDiagram
