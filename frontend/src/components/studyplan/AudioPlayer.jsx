@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, memo } from 'react'
 import { generateAudioSummary, API_BASE_URL } from '../../services/api'
 import { getNotebookLMLink } from './studyPlanHelpers.jsx'
 
-export default function AudioPlayer({ planId, resource, topic, activityDescription, pageRange, isPrimary = true }) {
+const AudioPlayer = memo(function AudioPlayer({ planId, resource, topic, activityDescription, pageRange, isPrimary = true }) {
   const hasExistingAudio = !!(resource?.audio_url)
   const [state, setState] = useState(hasExistingAudio ? 'ready' : 'idle') // idle | loading | ready | error
   const [audioUrl, setAudioUrl] = useState(resource?.audio_url || null)
@@ -174,4 +174,6 @@ export default function AudioPlayer({ planId, resource, topic, activityDescripti
       )}
     </div>
   )
-}
+})
+
+export default AudioPlayer

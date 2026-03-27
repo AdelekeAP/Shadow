@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { completeTask, deleteTask } from '../services/api'
 import EditTaskModal from './EditTaskModal'
@@ -516,4 +516,4 @@ const TaskList = ({ tasks, onUpdate, showCompleted = true, groupByCourse = false
   )
 }
 
-export default TaskList
+export default memo(TaskList)

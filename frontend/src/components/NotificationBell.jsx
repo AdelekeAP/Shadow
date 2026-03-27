@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, memo } from 'react'
 import {
   getNotifications,
   getNotificationCount,
@@ -58,7 +58,7 @@ const priorityDot = {
   low: '',
 }
 
-export default function NotificationBell() {
+const NotificationBell = memo(function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false)
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -306,4 +306,6 @@ export default function NotificationBell() {
       )}
     </div>
   )
-}
+})
+
+export default NotificationBell
