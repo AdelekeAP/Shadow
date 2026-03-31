@@ -91,10 +91,10 @@ export default function SmartStudyChat({ onClose }) {
     const baseUrl = API_BASE_URL
     const token = localStorage.getItem('access_token')
 
-    // Abort if no data received within 60 seconds
+    // Abort if no data received within 90 seconds
     const controller = new AbortController()
     activeControllerRef.current = controller
-    const timeout = setTimeout(() => controller.abort(), 60000)
+    const timeout = setTimeout(() => controller.abort(), 90000)
 
     let response
     try {
