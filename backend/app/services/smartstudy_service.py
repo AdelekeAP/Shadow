@@ -271,9 +271,9 @@ async def chat_with_smartstudy(
             call_with_retry,
             messages=gpt_messages,
             models=CHAT_MODELS,
-            max_tokens=500,
+            max_tokens=1024,
             temperature=0.7,
-            timeout=30.0,
+            timeout=60.0,
             stream=False,
         )
 
@@ -375,9 +375,9 @@ def stream_chat_with_smartstudy(
         stream = call_with_retry(
             messages=gpt_messages,
             models=CHAT_MODELS,
-            max_tokens=500,
+            max_tokens=1024,
             temperature=0.7,
-            timeout=30.0,
+            timeout=60.0,
             stream=True,
         )
 
