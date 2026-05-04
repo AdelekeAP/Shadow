@@ -17,8 +17,8 @@ class MoodLog(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
 
-    # Mood details
-    mood_type = Column(String(50), nullable=False)  # 'focused', 'tired', 'stressed', 'motivated', 'anxious', 'confident'
+    # Mood details — user self-reported via UI buttons
+    mood_type = Column(String(50), nullable=False)  # 'focused', 'motivated', 'calm', 'confident', 'tired', 'stressed', 'anxious', 'overwhelmed'
     energy_level = Column(Integer, nullable=False)  # 1-5 scale
     note = Column(Text, nullable=True)  # Optional text note
 
@@ -26,11 +26,11 @@ class MoodLog(Base):
     course_id = Column(UUID(as_uuid=True), ForeignKey('courses.id', ondelete='SET NULL'), nullable=True)
     task_id = Column(UUID(as_uuid=True), ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True)
 
-    # Enhanced emotion detection (7-emotion model)
-    sentiment_score = Column(Integer, nullable=True)  # -1 (negative), 0 (neutral), 1 (positive) - legacy
-    primary_emotion = Column(String(50), nullable=True)  # 'joy', 'sadness', 'anxiety', 'fear', 'anger', 'disgust', 'surprise'
+    # ML-detected emotion from `note` text — j-hartmann/emotion-english-distilroberta-base (7 classes)
+    sentiment_score = Column(Integer, nullable=True)  # -1 / 0 / 1 polarity derived from primary_emotion (legacy)
+    primary_emotion = Column(String(50), nullable=True)  # 'anger', 'disgust', 'fear', 'joy', 'neutral', 'sadness', 'surprise'
     emotion_confidence = Column(Numeric(3, 3), nullable=True)  # 0.000-1.000
-    emotion_scores = Column(JSONB, nullable=True)  # All 7 emotion scores {"joy": 0.892, "anxiety": 0.045, ...}
+    emotion_scores = Column(JSONB, nullable=True)  # All 7 scores: {"joy": 0.892, "neutral": 0.045, ...}
 
     logged_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
