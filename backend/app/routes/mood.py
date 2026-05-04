@@ -109,7 +109,10 @@ def log_mood(
             note=sanitized_note,
             course_id=mood_data.course_id,
             task_id=mood_data.task_id,
-            sentiment_score=sentiment_score
+            sentiment_score=sentiment_score,
+            primary_emotion=sentiment_data.get("primary_emotion") if sentiment_data else None,
+            emotion_confidence=sentiment_data.get("emotion_confidence") if sentiment_data else None,
+            emotion_scores=sentiment_data.get("emotion_scores") if sentiment_data else None,
         )
 
         db.add(mood_log)
@@ -131,7 +134,9 @@ def log_mood(
             response["sentiment_analysis"] = {
                 "score": sentiment_data['sentiment_score'],
                 "confidence": sentiment_data['confidence'],
-                "label": sentiment_data['label']
+                "label": sentiment_data['label'],
+                "primary_emotion": sentiment_data.get('primary_emotion'),
+                "emotion_scores": sentiment_data.get('emotion_scores'),
             }
 
             # Mismatch detection: compare mood selection with note sentiment
