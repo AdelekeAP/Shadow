@@ -45,7 +45,7 @@ export default function MoodLogger({ onMoodLogged, onClose }) {
         // Sentiment
         if (r.data.sentiment_analysis) {
           setSentimentFeedback({
-            label: r.data.sentiment_analysis.label,
+            label: r.data.sentiment_analysis.primary_emotion || r.data.sentiment_analysis.label,
             confidence: r.data.sentiment_analysis.confidence,
           })
         }
