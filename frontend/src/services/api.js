@@ -891,7 +891,8 @@ export const generateAudioSummary = async (planId, resourceId, activityDescripti
   try {
     const response = await api.post(
       `/api/v1/smartstudy/study-plans/${planId}/resources/${resourceId}/audio`,
-      { activity_description: activityDescription, page_range: pageRange, is_primary: isPrimary }
+      { activity_description: activityDescription, page_range: pageRange, is_primary: isPrimary },
+      { timeout: 180000 }
     )
     return response.data
   } catch (error) {
