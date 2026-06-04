@@ -28,6 +28,42 @@ CA_ASSESSMENTS = 30        # Tests + Projects (minimum 2)
 CA_PARTICIPATION = 5       # Class engagement
 
 
+# Grading types (mirrors Course.grading_type)
+GRADING_STANDARD = "standard_35_65"
+GRADING_SINGLE = "single_grade"
+
+# Final Year Project codes — fallback identification if grading_type is unset on a row
+FYP_COURSE_CODES = {"CSC497", "CSC498"}
+
+
+def is_single_grade(grading_type: Optional[str] = None, code: Optional[str] = None) -> bool:
+    """Whether a course is graded as a single score out of 100 (no 35/65 split).
+
+    Prefers the explicit ``grading_type`` field; falls back to FYP course codes
+    so legacy rows without the column populated are still handled correctly.
+    """
+    if grading_type == GRADING_SINGLE:
+        return True
+    if grading_type == GRADING_STANDARD:
+        return False
+    return code in FYP_COURSE_CODES
+
+
+def calculate_single_grade(project_score: float) -> Tuple[float, float, str, float]:
+    """Grade a single-grade course (e.g. Final Year Project).
+
+    The course carries one submitted score out of 100 (thesis + defence +
+    supervisor assessment). There is no CA/Exam split and no exam prediction —
+    the grade point is read straight off the standard 5.0 scale boundaries.
+
+    Returns (current_score, predicted_score, letter_grade, grade_point), matching
+    the shape of calculate_predicted_grade so callers stay uniform.
+    """
+    score = min(max(float(project_score), 0), 100)
+    info = convert_score_to_grade(score)
+    return (round(score, 2), round(score, 2), info["grade"], info["points"])
+
+
 def convert_score_to_grade(score: float) -> Dict[str, any]:
     """
     Convert numerical score to PAU grade information

@@ -22,6 +22,11 @@ class Course(Base):
     credits = Column(Integer, nullable=False)
     level = Column(String(10), nullable=True)  # '400'
     status = Column(String(20), default='C')  # 'C' (Compulsory), 'E' (Elective), 'R' (Required)
+    # How the course is graded:
+    #   'standard_35_65' — 35% CA + 65% Exam (PAU default)
+    #   'single_grade'   — one final score out of 100 (e.g. Final Year Project): no CA/Exam
+    #                      split, no exam prediction; grade-point uses the 5.0 scale directly.
+    grading_type = Column(String(20), nullable=False, server_default='standard_35_65', default='standard_35_65')
     department = Column(String(100), default='Computer Science')
     description = Column(Text, nullable=True)
     created_by = Column(String(10), default='admin')  # 'admin' or 'user'
@@ -44,6 +49,7 @@ class Course(Base):
             "credits": self.credits,
             "level": self.level,
             "status": self.status,
+            "grading_type": self.grading_type,
             "department": self.department,
             "description": self.description,
             "created_by": self.created_by,
