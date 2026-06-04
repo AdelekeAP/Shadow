@@ -87,18 +87,26 @@ const CourseCarousel = memo(function CourseCarousel({ enrolledCourses, onCourseC
           className={`flex gap-3.5 px-6 ${isPaused ? 'overflow-x-auto scrollbar-hide' : 'overflow-x-hidden'}`}
         >
           {duped.map((enrollment, idx) => {
+            // FYP / single-grade: one score out of 100 (stored in exam_score)
+            const isFYP = enrollment.course?.grading_type === 'single_grade'
             const ca = enrollment.ca_score || 0
             const part = enrollment.participation_score || 0
             const totalCA = ca + part
             const exam = enrollment.exam_score || 0
-            const total = totalCA + exam
+            const total = isFYP ? exam : totalCA + exam
             const taskPct = enrollment.completion_rate || 0
+            // Pending FYP: project hasn't been graded yet (no score, no predicted GP)
+            const fypPending = isFYP && !exam && (enrollment.predicted_grade_point === null || enrollment.predicted_grade_point === undefined)
 
             let gp = enrollment.predicted_grade_point
             let estimated = false
             if (gp === null || gp === undefined || gp === 0) {
               estimated = true
-              if (exam > 0) {
+              if (fypPending) {
+                gp = 4  // neutral card colour while ungraded; shown as "Pending"
+              } else if (isFYP) {
+                gp = total >= 70 ? 5 : total >= 60 ? 4 : total >= 50 ? 3 : total >= 45 ? 2 : total >= 40 ? 1 : 0
+              } else if (exam > 0) {
                 gp = total >= 70 ? 5 : total >= 60 ? 4 : total >= 50 ? 3 : total >= 45 ? 2 : total >= 40 ? 1 : 0
               } else if (totalCA > 0) {
                 const caP = (part ? totalCA : ca + 3) / 35
@@ -109,7 +117,7 @@ const CourseCarousel = memo(function CourseCarousel({ enrolledCourses, onCourseC
               }
             }
 
-            const letter = enrollment.predicted_letter_grade || (estimated && total === 0 ? '—' : getGradeLetter(gp))
+            const letter = fypPending ? '—' : (enrollment.predicted_letter_grade || (estimated && total === 0 ? '—' : getGradeLetter(gp)))
             const g = gradeConfig(gp)
             const isAssumed = !enrollment.participation_score
 
@@ -153,12 +161,18 @@ const CourseCarousel = memo(function CourseCarousel({ enrolledCourses, onCourseC
                       {/* Score + CA breakdown */}
                       <div className="flex items-end justify-between mb-2">
                         <div className="flex items-baseline gap-1">
-                          <span className="font-mono text-[22px] font-bold text-white leading-none">{total}</span>
-                          <span className="text-[11px] text-white/50">/100</span>
+                          {fypPending ? (
+                            <span className="font-display text-[15px] font-semibold text-white/80 leading-none">Pending</span>
+                          ) : (
+                            <>
+                              <span className="font-mono text-[22px] font-bold text-white leading-none">{total}</span>
+                              <span className="text-[11px] text-white/50">/100</span>
+                            </>
+                          )}
                         </div>
                         <div className="text-right">
                           <span className="text-[10px] text-white/60">
-                            CA {totalCA}/35{isAssumed && '*'}
+                            {isFYP ? (fypPending ? 'Not graded yet' : 'Project') : <>CA {totalCA}/35{isAssumed && '*'}</>}
                           </span>
                           <span className="text-white/30 mx-1">·</span>
                           <span className="text-[10px] text-white/60">{enrollment.course.credits}cr</span>

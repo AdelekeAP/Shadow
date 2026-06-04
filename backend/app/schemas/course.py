@@ -55,6 +55,8 @@ class UserCourseUpdate(BaseModel):
     ca_score: Optional[float] = Field(None, ge=0, le=35)
     participation_score: Optional[float] = Field(None, ge=0, le=5)
     exam_score: Optional[float] = Field(None, ge=0, le=65)
+    # Single-grade courses (e.g. Final Year Project): one final score out of 100.
+    project_score: Optional[float] = Field(None, ge=0, le=100)
 
 
 class UserCourseResponse(BaseModel):

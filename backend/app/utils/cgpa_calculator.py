@@ -7,7 +7,28 @@ from typing import List, Dict, Optional
 from sqlalchemy.orm import Session, joinedload
 from app.models.course import Course, UserCourse, Semester
 from app.models.task import Task
-from app.utils.pau_grading import PAUGradingSystem
+from app.utils.pau_grading import PAUGradingSystem, is_single_grade
+
+
+def expected_score_from_cgpa(cgpa: float) -> float:
+    """Project an expected course score (out of 100) from a student's CGPA.
+
+    Used to forecast a not-yet-graded single-grade course (e.g. FYP) for the
+    PREDICTED final CGPA: a student performing at a given CGPA is assumed to
+    achieve a representative score in the matching grade band. Keeps the
+    forecast personalised rather than a flat guess.
+    """
+    if cgpa >= 4.5:
+        return 85.0   # A band
+    if cgpa >= 3.5:
+        return 65.0   # B band
+    if cgpa >= 2.4:
+        return 55.0   # C band
+    if cgpa >= 1.5:
+        return 47.0   # D band
+    if cgpa >= 1.0:
+        return 42.0   # E band
+    return 35.0
 
 
 class CGPACalculator:
@@ -258,21 +279,42 @@ class CGPACalculator:
                     'courses': []
                 }
 
-            # Use pre-fetched tasks (scored only for GPA calculation)
-            course_tasks = tasks_by_course.get(user_course.id, [])
-            scored_tasks = [
-                t for t in course_tasks
-                if t.earned_marks is not None and t.weight and (t.max_marks or t.weight)
-            ]
+            # Single-grade courses (e.g. FYP): score is the single submitted grade
+            # out of 100 (stored in exam_score), not derived from tasks.
+            uc_course = user_course.course
+            if uc_course and is_single_grade(uc_course.grading_type, uc_course.code):
+                # Pending FYP (not graded yet) is EXCLUDED from current/actual CGPA
+                # — it must not be counted as an F. It's projected separately below
+                # for the predicted final CGPA.
+                if user_course.exam_score is None and user_course.current_score is None:
+                    continue
+                current_score = (
+                    float(user_course.exam_score)
+                    if user_course.exam_score is not None
+                    else float(user_course.current_score)
+                )
+            else:
+                # Use pre-fetched tasks (scored only for GPA calculation)
+                course_tasks = tasks_by_course.get(user_course.id, [])
+                scored_tasks = [
+                    t for t in course_tasks
+                    if t.earned_marks is not None and t.weight and (t.max_marks or t.weight)
+                ]
 
-            total_weight = sum(float(t.weight) for t in scored_tasks)
-            weighted_score = sum(
-                (float(t.earned_marks if t.earned_marks is not None else 0) / float(t.max_marks if t.max_marks else t.weight))
-                * float(t.weight)
-                for t in scored_tasks
-            )
+                # No CA recorded yet → treat as "not yet assessed" and EXCLUDE from
+                # current CGPA rather than scoring it 0. Mirrors pending-FYP handling.
+                # (Sparse-data users are not penalised for courses they haven't logged.)
+                if not scored_tasks:
+                    continue
 
-            current_score = (weighted_score / total_weight) * 100 if total_weight > 0 else 0
+                total_weight = sum(float(t.weight) for t in scored_tasks)
+                weighted_score = sum(
+                    (float(t.earned_marks if t.earned_marks is not None else 0) / float(t.max_marks if t.max_marks else t.weight))
+                    * float(t.weight)
+                    for t in scored_tasks
+                )
+
+                current_score = (weighted_score / total_weight) * 100 if total_weight > 0 else 0
 
             credits = user_course.course.credits if user_course.course else 0
             semesters[semester_key]['courses'].append({
@@ -299,6 +341,21 @@ class CGPACalculator:
         # Get predicted courses using pre-fetched tasks (no extra queries)
         predicted_courses = []
         for user_course in user_courses:
+            # Single-grade courses (e.g. FYP): use the submitted grade if awarded,
+            # otherwise (pending) project it from the student's current CGPA so the
+            # final-CGPA forecast still accounts for the course's credits.
+            uc_course = user_course.course
+            if uc_course and is_single_grade(uc_course.grading_type, uc_course.code):
+                if user_course.exam_score is not None:
+                    projected = max(min(float(user_course.exam_score), 100), 0)
+                else:
+                    projected = expected_score_from_cgpa(cumulative_data['cgpa'])
+                predicted_courses.append({
+                    'credits': uc_course.credits if uc_course else 0,
+                    'predicted_score': projected
+                })
+                continue
+
             course_tasks = tasks_by_course.get(user_course.id, [])
             completed_weight = sum(
                 float(t.weight) for t in course_tasks
