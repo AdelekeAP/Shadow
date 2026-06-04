@@ -338,6 +338,31 @@ class CGPACalculator:
         semester_list = [semesters[k] for k in sorted_keys]
         cumulative_data = CGPACalculator.calculate_cumulative_gpa(semester_list)
 
+        # ── True cumulative CGPA ─────────────────────────────────────────────
+        # `cumulative_data` above is only THIS SEMESTER's GPA (from current CA
+        # performance on the enrolled courses). Blend it with the student's stored
+        # historical standing so the headline figure is a true cumulative CGPA,
+        # not a single-semester snapshot:
+        #   true = (hist_cgpa*hist_credits + sem_gp*sem_credits) / (hist_credits + sem_credits)
+        # NOTE: this semester's credits are layered ON TOP of total_credits_completed,
+        # which is assumed to hold prior (pre-this-semester) credits.
+        semester_gp = cumulative_data['cgpa']
+        semester_credits = cumulative_data['total_credits']
+        hist_cgpa = float(user.current_cgpa) if user and user.current_cgpa else None
+        hist_credits = int(user.total_credits_completed or 0) if user else 0
+        has_history = hist_cgpa is not None and hist_credits > 0
+        if has_history:
+            denom = hist_credits + semester_credits
+            true_cgpa = round((hist_cgpa * hist_credits + semester_gp * semester_credits) / denom, 2) if denom > 0 else hist_cgpa
+            true_credits = denom
+        else:
+            true_cgpa = semester_gp
+            true_credits = semester_credits
+        # Forecasting / feasibility baseline = prior standing; this semester is
+        # layered on top via predicted_courses / the required-GPA computation.
+        base_cgpa = hist_cgpa if has_history else semester_gp
+        base_credits = hist_credits if has_history else semester_credits
+
         # Get predicted courses using pre-fetched tasks (no extra queries)
         predicted_courses = []
         for user_course in user_courses:
@@ -349,7 +374,7 @@ class CGPACalculator:
                 if user_course.exam_score is not None:
                     projected = max(min(float(user_course.exam_score), 100), 0)
                 else:
-                    projected = expected_score_from_cgpa(cumulative_data['cgpa'])
+                    projected = expected_score_from_cgpa(true_cgpa)
                 predicted_courses.append({
                     'credits': uc_course.credits if uc_course else 0,
                     'predicted_score': projected
@@ -380,10 +405,11 @@ class CGPACalculator:
                     'predicted_score': max(min(avg_score, 100), 0)
                 })
 
-        # Calculate predictions
+        # Calculate predictions — baseline is prior standing, this semester's
+        # predicted courses are added on top (true predicted cumulative CGPA).
         predicted_data = CGPACalculator.predict_final_cgpa(
-            current_cgpa=cumulative_data['cgpa'],
-            current_credits=cumulative_data['total_credits'],
+            current_cgpa=base_cgpa,
+            current_credits=base_credits,
             predicted_courses=predicted_courses
         )
 
@@ -411,15 +437,31 @@ class CGPACalculator:
             if sem_credit_totals:
                 current_semester_credits = round(sum(sem_credit_totals) / len(sem_credit_totals))
 
+        # Feasibility uses the historical baseline + this semester's credits as the
+        # lever, so an unreachable target (e.g. 132cr @ 3.60 needing 4.00) is
+        # correctly flagged impossible even with a perfect remaining semester.
         target_gpa_data = CGPACalculator.calculate_target_semester_gpa(
-            current_cgpa=cumulative_data['cgpa'],
-            current_credits=cumulative_data['total_credits'],
+            current_cgpa=base_cgpa,
+            current_credits=base_credits,
             target_cgpa=user_target_cgpa,
             semester_credits=current_semester_credits if current_semester_credits > 0 else 18
         )
 
+        # Headline 'current' figure = blended true cumulative CGPA; the raw
+        # this-semester GPA is exposed separately for transparency.
+        current_block = dict(cumulative_data)
+        current_block.update({
+            'cgpa': true_cgpa,
+            'total_credits': true_credits,
+            'semester_gpa': semester_gp,
+            'semester_credits': semester_credits,
+            'historical_cgpa': hist_cgpa,
+            'historical_credits': hist_credits,
+            'classification': PAUGradingSystem.get_classification(true_cgpa),
+        })
+
         return {
-            'current': cumulative_data,
+            'current': current_block,
             'predictions': predicted_data,
             'target_analysis': target_gpa_data,
             'semesters': semester_list,
