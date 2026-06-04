@@ -301,6 +301,12 @@ class CGPACalculator:
                     if t.earned_marks is not None and t.weight and (t.max_marks or t.weight)
                 ]
 
+                # No CA recorded yet → treat as "not yet assessed" and EXCLUDE from
+                # current CGPA rather than scoring it 0. Mirrors pending-FYP handling.
+                # (Sparse-data users are not penalised for courses they haven't logged.)
+                if not scored_tasks:
+                    continue
+
                 total_weight = sum(float(t.weight) for t in scored_tasks)
                 weighted_score = sum(
                     (float(t.earned_marks if t.earned_marks is not None else 0) / float(t.max_marks if t.max_marks else t.weight))
