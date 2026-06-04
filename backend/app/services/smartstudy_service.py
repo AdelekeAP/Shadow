@@ -14,6 +14,7 @@ from app.models.task import Task
 from app.models.course import UserCourse, Course
 from app.models.mood import MoodLog
 from app.models.smartstudy import ChatConversation, ChatMessage, StudyPlan
+from app.utils.pau_grading import is_single_grade
 from app.services.openai_client import (
     get_openai_client,
     call_with_retry,
@@ -65,6 +66,7 @@ def load_student_context(db: Session, user_id: str) -> Dict[str, Any]:
                 "code": course.code,
                 "title": course.title,
                 "credits": course.credits,
+                "grading_type": course.grading_type,
                 "ca_score": float(uc.ca_score) if uc.ca_score else 0,
                 "predicted_grade": uc.predicted_letter_grade,
                 "predicted_score": float(uc.predicted_score) if uc.predicted_score else None,
@@ -540,9 +542,13 @@ def check_smartstudy_triggers(db: Session, user_id: str) -> Dict[str, Any]:
             urgency = "medium"
 
     # TRIGGER 6: Failing/low-performing courses (High urgency)
+    # Skip single-grade courses (e.g. FYP): they have no CA component, so a
+    # ca_score of 0 means "not graded yet", not "low performance" — including
+    # them would spuriously flag every student (even top performers).
     low_performing_courses = [c for c in courses if
-                             (c.get("predicted_grade") in ["D", "E", "F"]) or
-                             (c.get("ca_score", 0) < 15)]  # Less than 15/35 CA
+                             not is_single_grade(c.get("grading_type"), c.get("code")) and
+                             ((c.get("predicted_grade") in ["D", "E", "F"]) or
+                              (c.get("ca_score", 0) < 15))]  # Less than 15/35 CA
 
     if low_performing_courses:
         course_names = ", ".join([c["code"] for c in low_performing_courses[:2]])
