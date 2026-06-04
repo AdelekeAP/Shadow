@@ -1,18 +1,24 @@
 import { useState, useEffect, useRef } from 'react'
 
 export default function EditCourseScoresModal({ isOpen, onClose, enrollment, onUpdate }) {
-  const [form, setForm] = useState({ ca_score: '', participation_score: '', exam_score: '' })
+  const [form, setForm] = useState({ ca_score: '', participation_score: '', exam_score: '', project_score: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [entering, setEntering] = useState(false)
   const backdropRef = useRef(null)
 
+  // FYP / project courses are graded as a single score out of 100 (no CA/Exam split)
+  const isFYP = enrollment?.course?.grading_type === 'single_grade'
+
   useEffect(() => {
     if (enrollment) {
+      const fyp = enrollment.course?.grading_type === 'single_grade'
       setForm({
         ca_score: enrollment.ca_score || '',
         participation_score: enrollment.participation_score || '',
         exam_score: enrollment.exam_score || '',
+        // FYP stores its single grade in exam_score (0–100)
+        project_score: fyp ? (enrollment.exam_score ?? enrollment.current_score ?? '') : '',
       })
     }
   }, [enrollment])
@@ -29,6 +35,21 @@ export default function EditCourseScoresModal({ isOpen, onClose, enrollment, onU
     e.preventDefault()
     setError('')
     setLoading(true)
+
+    // FYP / single-grade: one project score out of 100
+    if (isFYP) {
+      const grade = form.project_score === '' ? null : parseFloat(form.project_score)
+      if (grade === null || isNaN(grade) || grade < 0 || grade > 100) {
+        setError('Project grade: 0–100'); setLoading(false); return
+      }
+      try {
+        await onUpdate(enrollment.id, { project_score: grade })
+        close()
+      } catch (err) {
+        setError(err.message || err.detail || 'Failed to update grade')
+      } finally { setLoading(false) }
+      return
+    }
 
     const ca = parseFloat(form.ca_score) || 0
     const part = form.participation_score ? parseFloat(form.participation_score) : null
@@ -80,7 +101,9 @@ export default function EditCourseScoresModal({ isOpen, onClose, enrollment, onU
             <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
           </svg>
           <p className="text-[11px] text-navy-600 leading-relaxed">
-            Participation defaults to <span className="font-semibold">3/5</span> for predictions until you update it.
+            {isFYP
+              ? <>This is a <span className="font-semibold">Final Year Project</span> — graded as a single score out of 100 (thesis, defence &amp; supervisor assessment). No CA/Exam split.</>
+              : <>Participation defaults to <span className="font-semibold">3/5</span> for predictions until you update it.</>}
           </p>
         </div>
 
@@ -95,30 +118,43 @@ export default function EditCourseScoresModal({ isOpen, onClose, enrollment, onU
         )}
 
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          {/* CA Score */}
-          <ScoreField
-            label="CA Score" max="30" hint="Assignments, tests, etc."
-            value={form.ca_score} onChange={(v) => set('ca_score', v)}
-          />
+          {isFYP ? (
+            <>
+              {/* Single project grade out of 100 */}
+              <ScoreField
+                label="Project Grade" max="100" hint="Final thesis / defence score"
+                value={form.project_score} onChange={(v) => set('project_score', v)}
+                placeholder="—"
+              />
+            </>
+          ) : (
+            <>
+              {/* CA Score */}
+              <ScoreField
+                label="CA Score" max="30" hint="Assignments, tests, etc."
+                value={form.ca_score} onChange={(v) => set('ca_score', v)}
+              />
 
-          {/* Participation */}
-          <ScoreField
-            label="Participation" max="5" hint="Lecturer-awarded"
-            value={form.participation_score} onChange={(v) => set('participation_score', v)}
-          />
+              {/* Participation */}
+              <ScoreField
+                label="Participation" max="5" hint="Lecturer-awarded"
+                value={form.participation_score} onChange={(v) => set('participation_score', v)}
+              />
 
-          {/* Exam */}
-          <ScoreField
-            label="Exam Score" max="65" hint="Leave blank if not taken"
-            value={form.exam_score} onChange={(v) => set('exam_score', v)}
-            placeholder="—"
-          />
+              {/* Exam */}
+              <ScoreField
+                label="Exam Score" max="65" hint="Leave blank if not taken"
+                value={form.exam_score} onChange={(v) => set('exam_score', v)}
+                placeholder="—"
+              />
+            </>
+          )}
 
           {/* Live total preview */}
           <div className="flex items-center justify-between py-3 border-t border-surface-100">
-            <span className="text-[12px] font-semibold text-surface-400 uppercase tracking-wider">Total preview</span>
+            <span className="text-[12px] font-semibold text-surface-400 uppercase tracking-wider">{isFYP ? 'Project grade' : 'Total preview'}</span>
             <div className="flex items-baseline gap-1">
-              <span className="font-mono text-[20px] font-bold text-navy-900">{total.toFixed(1)}</span>
+              <span className="font-mono text-[20px] font-bold text-navy-900">{isFYP ? (parseFloat(form.project_score) || 0).toFixed(1) : total.toFixed(1)}</span>
               <span className="text-[12px] text-surface-300">/100</span>
             </div>
           </div>

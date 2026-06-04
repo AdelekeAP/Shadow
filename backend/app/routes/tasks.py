@@ -26,7 +26,7 @@ from app.schemas.task import (
 )
 from sqlalchemy.exc import IntegrityError
 from app.utils.auth import get_current_user
-from app.utils.pau_grading import calculate_predicted_grade
+from app.utils.pau_grading import calculate_predicted_grade, is_single_grade, calculate_single_grade
 from app.services.cache_service import cache_delete_pattern
 from app.utils.input_sanitizer import sanitize_text
 from app.middleware.rate_limiter import limiter
@@ -39,6 +39,14 @@ logger = logging.getLogger(__name__)
 def recalculate_course_scores(user_course, db):
     """Recalculate CA and EXAM scores for a user course from completed tasks."""
     from app.models.task import Task
+
+    # Single-grade courses (e.g. Final Year Project) carry one score out of 100
+    # in user_course.exam_score and have no CA/Exam tasks — don't derive from tasks.
+    course = user_course.course
+    if course and is_single_grade(course.grading_type, course.code):
+        user_course.ca_score = 0
+        user_course.completion_rate = 100 if user_course.exam_score is not None else 0
+        return
 
     ca_tasks = db.query(Task).filter(
         Task.user_course_id == user_course.id,
@@ -72,6 +80,33 @@ def update_course_grades(user_course: UserCourse, db: Session):
         user_course: UserCourse instance to update
         db: Database session
     """
+    # Single-grade courses (e.g. Final Year Project): the final grade is the single
+    # submitted score out of 100 (in exam_score). No 35/65 split, no exam prediction —
+    # grade point comes straight off the 5.0 scale.
+    course = user_course.course
+    if course and is_single_grade(course.grading_type, course.code):
+        if user_course.exam_score is None:
+            user_course.current_score = None
+            user_course.predicted_score = None
+            user_course.letter_grade = None
+            user_course.predicted_letter_grade = None
+            user_course.current_grade_point = None
+            user_course.predicted_grade_point = None
+        else:
+            cur, pred, letter, gp = calculate_single_grade(float(user_course.exam_score))
+            user_course.current_score = cur
+            user_course.predicted_score = pred
+            user_course.letter_grade = letter
+            user_course.predicted_letter_grade = letter
+            user_course.current_grade_point = gp
+            user_course.predicted_grade_point = gp
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to save changes")
+        return
+
     ca_score = float(user_course.ca_score) if user_course.ca_score else 0.0
     exam_score = float(user_course.exam_score) if user_course.exam_score else None
 

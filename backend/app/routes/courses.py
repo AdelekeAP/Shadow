@@ -23,7 +23,7 @@ from app.schemas.course import (
 )
 from sqlalchemy.exc import IntegrityError
 from app.utils.auth import get_current_user
-from app.utils.pau_grading import PAUGradingSystem
+from app.utils.pau_grading import PAUGradingSystem, is_single_grade, calculate_single_grade
 from app.services.cache_service import cache_get, cache_set, cache_delete, cache_delete_pattern
 from app.utils.input_sanitizer import sanitize_text
 
@@ -438,24 +438,40 @@ async def update_user_course(
         enrollment.participation_score = update_data.participation_score
     if update_data.exam_score is not None:
         enrollment.exam_score = update_data.exam_score
+    # FYP/single-grade: the project grade (0-100) is stored in exam_score.
+    if update_data.project_score is not None:
+        enrollment.exam_score = update_data.project_score
 
-    # Recalculate scores and grades from component scores
-    ca = float(enrollment.ca_score) if enrollment.ca_score is not None else 0.0
-    participation = float(enrollment.participation_score) if enrollment.participation_score is not None else 0.0
+    # Single-grade courses (e.g. Final Year Project): exam_score carries the full
+    # project grade out of 100. No CA/participation/exam split — grade the score directly.
+    course = enrollment.course
+    if course and is_single_grade(course.grading_type, course.code):
+        if enrollment.exam_score is not None:
+            cur, pred, letter, gp = calculate_single_grade(float(enrollment.exam_score))
+            enrollment.current_score = cur
+            enrollment.predicted_score = pred
+            enrollment.current_grade_point = gp
+            enrollment.predicted_grade_point = gp
+            enrollment.letter_grade = letter
+            enrollment.predicted_letter_grade = letter
+    else:
+        # Recalculate scores and grades from component scores
+        ca = float(enrollment.ca_score) if enrollment.ca_score is not None else 0.0
+        participation = float(enrollment.participation_score) if enrollment.participation_score is not None else 0.0
 
-    if enrollment.exam_score is not None:
-        total = ca + participation + float(enrollment.exam_score)
-        enrollment.current_score = min(total, 100)
-        enrollment.current_grade_point = PAUGradingSystem.get_grade_point(enrollment.current_score)
-        enrollment.letter_grade = PAUGradingSystem.get_letter_grade(enrollment.current_score)
-        enrollment.predicted_score = enrollment.current_score
-        enrollment.predicted_grade_point = enrollment.current_grade_point
-        enrollment.predicted_letter_grade = enrollment.letter_grade
-    elif enrollment.predicted_exam_score is not None:
-        predicted_total = ca + participation + float(enrollment.predicted_exam_score)
-        enrollment.predicted_score = min(predicted_total, 100)
-        enrollment.predicted_grade_point = PAUGradingSystem.get_grade_point(enrollment.predicted_score)
-        enrollment.predicted_letter_grade = PAUGradingSystem.get_letter_grade(enrollment.predicted_score)
+        if enrollment.exam_score is not None:
+            total = ca + participation + float(enrollment.exam_score)
+            enrollment.current_score = min(total, 100)
+            enrollment.current_grade_point = PAUGradingSystem.get_grade_point(enrollment.current_score)
+            enrollment.letter_grade = PAUGradingSystem.get_letter_grade(enrollment.current_score)
+            enrollment.predicted_score = enrollment.current_score
+            enrollment.predicted_grade_point = enrollment.current_grade_point
+            enrollment.predicted_letter_grade = enrollment.letter_grade
+        elif enrollment.predicted_exam_score is not None:
+            predicted_total = ca + participation + float(enrollment.predicted_exam_score)
+            enrollment.predicted_score = min(predicted_total, 100)
+            enrollment.predicted_grade_point = PAUGradingSystem.get_grade_point(enrollment.predicted_score)
+            enrollment.predicted_letter_grade = PAUGradingSystem.get_letter_grade(enrollment.predicted_score)
 
     try:
         db.commit()
@@ -468,7 +484,7 @@ async def update_user_course(
     db.refresh(enrollment)
 
     # Invalidate CGPA and course caches when scores change
-    if any(v is not None for v in [update_data.ca_score, update_data.participation_score, update_data.exam_score]):
+    if any(v is not None for v in [update_data.ca_score, update_data.participation_score, update_data.exam_score, update_data.project_score]):
         cache_delete_pattern(f"cgpa:*:{current_user.id}")
         cache_delete_pattern(f"courses:enrolled:{current_user.id}:*")
 
