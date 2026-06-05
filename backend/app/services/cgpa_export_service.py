@@ -4,6 +4,7 @@ CGPA Export Service - Generate CSV and PDF exports of CGPA data
 import csv
 import io
 from datetime import datetime, timezone
+import xlsxwriter
 from fpdf import FPDF
 from app.utils.pau_grading import get_classification, get_letter_grade, get_grade_point
 
@@ -50,6 +51,102 @@ def generate_csv(cgpa_data: dict) -> bytes:
 
     # Add UTF-8 BOM for Excel compatibility
     return b'\xef\xbb\xbf' + output.getvalue().encode("utf-8")
+
+
+def generate_xlsx(cgpa_data: dict, student_name: str = "Student") -> bytes:
+    """
+    Generate a real .xlsx (Excel) workbook of CGPA data using xlsxwriter.
+
+    Args:
+        cgpa_data: Dict from CGPACalculator.get_user_cgpa_data()
+        student_name: Student's display name
+
+    Returns:
+        XLSX file bytes (opens natively in Excel / Numbers / Google Sheets)
+
+    Raises:
+        ValueError: If cgpa_data is invalid
+    """
+    if not cgpa_data or not isinstance(cgpa_data, dict):
+        raise ValueError("Invalid CGPA data provided")
+
+    if not student_name or not student_name.strip():
+        student_name = "Student"
+
+    current = cgpa_data.get("current", {}) or {}
+    cgpa = current.get("cgpa", 0.0)
+    total_credits = current.get("total_credits", 0)
+    total_courses = cgpa_data.get("total_courses", 0)
+    classification = get_classification(cgpa)
+    target_analysis = cgpa_data.get("target_analysis", {}) or {}
+    semesters = cgpa_data.get("semesters") or []
+
+    output = io.BytesIO()
+    wb = xlsxwriter.Workbook(output, {"in_memory": True})
+
+    # ── Formats ──
+    title_fmt = wb.add_format({"bold": True, "font_size": 18, "font_color": "#0F172A"})
+    sub_fmt = wb.add_format({"font_size": 9, "font_color": "#64748B"})
+    label_fmt = wb.add_format({"bold": True, "font_color": "#334155"})
+    big_fmt = wb.add_format({"bold": True, "font_size": 22, "font_color": "#1E3A5F"})
+    head_fmt = wb.add_format({
+        "bold": True, "font_color": "white", "bg_color": "#1E3A5F",
+        "border": 1, "border_color": "#CBD5E1", "align": "center", "valign": "vcenter",
+    })
+    cell_fmt = wb.add_format({"border": 1, "border_color": "#E2E8F0"})
+    num_fmt = wb.add_format({"border": 1, "border_color": "#E2E8F0", "num_format": "0.00"})
+    int_fmt = wb.add_format({"border": 1, "border_color": "#E2E8F0", "num_format": "0"})
+    sem_fmt = wb.add_format({"bold": True, "bg_color": "#F1F5F9", "border": 1, "border_color": "#E2E8F0"})
+
+    ws = wb.add_worksheet("CGPA Report")
+    ws.set_column("A:A", 22)
+    ws.set_column("B:B", 14)
+    ws.set_column("C:C", 34)
+    ws.set_column("D:G", 13)
+    ws.hide_gridlines(2)
+
+    # ── Header / summary ──
+    ws.write("A1", "Shadow — CGPA Report", title_fmt)
+    ws.write("A2", f"Generated {datetime.now(timezone.utc).strftime('%B %d, %Y at %I:%M %p UTC')}", sub_fmt)
+    ws.write("A4", "Student", label_fmt); ws.write("B4", student_name)
+    ws.write("A5", "Classification", label_fmt); ws.write("B5", classification)
+    ws.write("A6", "Total Credits", label_fmt); ws.write("B6", total_credits)
+    ws.write("A7", "Total Courses", label_fmt); ws.write("B7", total_courses)
+    if target_analysis:
+        ws.write("A8", "Target CGPA", label_fmt)
+        ws.write("B8", target_analysis.get("target_cgpa", "N/A"))
+        ws.write("A9", "Feasibility", label_fmt)
+        ws.write("B9", target_analysis.get("difficulty", "N/A"))
+    ws.write("F4", "Cumulative GPA", sub_fmt)
+    ws.write("F5", cgpa, big_fmt)
+
+    # ── Course table ──
+    row = 11
+    headers = ["Semester", "Course Code", "Course Name", "Credits", "Score", "Grade", "Grade Points"]
+    for col, h in enumerate(headers):
+        ws.write(row, col, h, head_fmt)
+    row += 1
+
+    for semester in semesters:
+        courses = semester.get("courses", []) or []
+        if not courses:
+            continue
+        sem_name = semester.get("name", "Unknown")
+        for course in courses:
+            ws.write(row, 0, sem_name, cell_fmt)
+            ws.write(row, 1, course.get("code", ""), cell_fmt)
+            ws.write(row, 2, course.get("name", ""), cell_fmt)
+            ws.write_number(row, 3, course.get("credits", 0) or 0, int_fmt)
+            ws.write_number(row, 4, round(course.get("score", 0) or 0, 2), num_fmt)
+            ws.write(row, 5, course.get("grade", "N/A"), cell_fmt)
+            ws.write_number(row, 6, course.get("grade_point", 0.0) or 0.0, num_fmt)
+            row += 1
+
+    if row == 12:  # no course rows written
+        ws.merge_range(row, 0, row, 6, "No graded courses yet.", sem_fmt)
+
+    wb.close()
+    return output.getvalue()
 
 
 def generate_pdf(cgpa_data: dict, student_name: str) -> bytes:
