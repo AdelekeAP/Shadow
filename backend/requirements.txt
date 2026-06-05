@@ -70,6 +70,7 @@ redis==5.2.1
 
 # CGPA export
 fpdf2==2.8.3
+XlsxWriter==3.2.9
 
 # Statistical analysis
 scipy==1.15.2
