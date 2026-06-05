@@ -15,6 +15,9 @@ class CourseBase(BaseModel):
     status: Optional[str] = Field("C", max_length=20)
     department: Optional[str] = Field("Computer Science", max_length=100)
     description: Optional[str] = Field(None, max_length=1000)
+    # 'standard_35_65' (CA/exam split) or 'single_grade' (FYP, graded as one score /100).
+    # The frontend keys its FYP "Pending — not graded yet" UI off this field, so it must be exposed.
+    grading_type: Optional[str] = Field(None, max_length=20)
 
     @validator('status')
     def validate_status(cls, v):
