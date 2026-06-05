@@ -2,9 +2,9 @@
 Library Models - Student-Powered Learning Library
 Stores course materials uploaded by students for shared learning
 """
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, ARRAY, Index, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, ARRAY, Index, UniqueConstraint, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 from datetime import datetime, timezone
 import uuid
 
@@ -38,6 +38,13 @@ class LibraryDocument(Base):
     file_type = Column(String(10), nullable=False)  # 'pdf', 'pptx'
     file_size = Column(Integer, nullable=False)  # Bytes
     converted_pdf_path = Column(Text, nullable=True)  # Path to converted PDF (for PPTX viewing)
+
+    # Persistent file bytes stored directly in Postgres. Railway's filesystem is ephemeral
+    # (wiped on every redeploy), so file_path alone is unreliable in production. These columns
+    # are the durable source of truth; file_path is kept as a fallback for local dev.
+    # deferred() => the blob is NOT loaded by browse/list queries, only when a file is served.
+    file_data = deferred(Column(LargeBinary, nullable=True))  # Raw uploaded file bytes
+    converted_pdf_data = deferred(Column(LargeBinary, nullable=True))  # Converted PDF bytes (PPTX viewing)
 
     # Duplicate detection
     content_hash = Column(String(64), nullable=False, index=True)  # SHA-256 hash
