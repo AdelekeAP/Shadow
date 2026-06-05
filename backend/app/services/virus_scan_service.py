@@ -14,6 +14,20 @@ logger = logging.getLogger(__name__)
 
 SCAN_TIMEOUT = 30  # seconds — prevents hangs on ZIP bombs or large files
 
+# Magic-byte signatures for the only file types the library accepts.
+# PDF starts with "%PDF"; PPTX/Office Open XML files are ZIP archives ("PK\x03\x04").
+_ALLOWED_SIGNATURES = (b"%PDF", b"PK\x03\x04")
+
+
+def _basic_content_safe(file_content: bytes) -> bool:
+    """
+    Minimum safeguard used when no AV scanner is available: confirm the bytes
+    actually start with a PDF or Office/ZIP signature. This blocks disguised
+    executables/scripts from masquerading as study material.
+    """
+    head = file_content[:8]
+    return any(head.startswith(sig) for sig in _ALLOWED_SIGNATURES)
+
 
 def _get_clamd() -> Optional[Any]:
     """Get a ClamAV daemon connection, or None if unavailable."""
@@ -51,7 +65,19 @@ def scan_bytes(file_content: bytes) -> Dict[str, Any]:
     cd = _get_clamd()
 
     if cd is None:
-        logger.warning("ClamAV daemon unavailable — file quarantined as pending")
+        # No AV scanner deployed (e.g. Railway has no ClamAV). Quarantining as 'pending'
+        # makes uploads invisible forever since nothing ever promotes them. For this closed
+        # academic deployment we instead auto-approve after a magic-byte content-type check.
+        # This is acceptable because uploads are already restricted to PDF/PPTX, capped at
+        # 25 MB, and always served with Content-Disposition (never executed). Set
+        # REQUIRE_VIRUS_SCAN=true to restore strict quarantine if a scanner is added later.
+        if os.getenv("REQUIRE_VIRUS_SCAN", "false").lower() in ("1", "true", "yes"):
+            logger.warning("ClamAV unavailable and REQUIRE_VIRUS_SCAN set — file quarantined as pending")
+            return {"status": "pending", "threat": None}
+        if _basic_content_safe(file_content):
+            logger.warning("ClamAV unavailable — file passed content-type check, marked clean")
+            return {"status": "clean", "threat": None}
+        logger.warning("ClamAV unavailable and content-type check failed — quarantined as pending")
         return {"status": "pending", "threat": None}
 
     try:

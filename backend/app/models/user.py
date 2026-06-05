@@ -47,6 +47,8 @@ class User(Base):
 
     def to_dict(self):
         """Convert user to dictionary (exclude password)"""
+        # Local import avoids any circular import at module load time.
+        from app.services.email_service import _smtp_configured
         return {
             "id": str(self.id),
             "email": self.email,
@@ -62,4 +64,5 @@ class User(Base):
             "last_login": self.last_login.isoformat() if self.last_login else None,
             "is_active": self.is_active,
             "email_verified": self.email_verified if self.email_verified is not None else False,
+            "email_delivery_enabled": _smtp_configured(),
         }

@@ -77,6 +77,9 @@ class UserResponse(BaseModel):
     last_login: Optional[datetime]
     is_active: bool
     email_verified: Optional[bool] = False
+    # True only when the server has SMTP configured. The frontend uses this to avoid
+    # nagging users to "verify your email" when no email can actually be delivered.
+    email_delivery_enabled: Optional[bool] = False
 
     class Config:
         from_attributes = True  # For Pydantic v2 (was orm_mode in v1)

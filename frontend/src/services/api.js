@@ -550,6 +550,15 @@ export const exportCGPApdf = async () => {
   }
 }
 
+export const exportCGPAxlsx = async () => {
+  try {
+    const response = await api.get('/api/v1/cgpa/export/xlsx', { responseType: 'blob' })
+    return response
+  } catch (error) {
+    throw error.response?.data || error
+  }
+}
+
 // ============================================
 // Semesters API
 // ============================================

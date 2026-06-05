@@ -14,7 +14,7 @@ from app.models.user import User
 from app.models.course import Course, UserCourse, Semester
 from app.models.task import Task
 from app.services.cache_service import cache_get, cache_set, cache_delete_pattern
-from app.services.cgpa_export_service import generate_csv, generate_pdf
+from app.services.cgpa_export_service import generate_csv, generate_pdf, generate_xlsx
 from app.middleware.rate_limiter import limiter
 from pydantic import BaseModel
 
@@ -490,3 +490,34 @@ def export_cgpa_pdf(
     except Exception as e:
         logger.error("PDF export error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to export PDF")
+
+
+@router.get(
+    "/export/xlsx",
+    operation_id="export_cgpa_xlsx",
+    summary="Export CGPA data as Excel (.xlsx)",
+)
+@limiter.limit("10/hour")
+def export_cgpa_xlsx(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export CGPA data as a downloadable Excel (.xlsx) workbook"""
+    try:
+        cgpa_data = CGPACalculator.get_user_cgpa_data(db, current_user.id)
+        xlsx_bytes = generate_xlsx(cgpa_data, current_user.full_name or 'Student')
+
+        # Sanitize filename to prevent injection attacks
+        safe_name = re.sub(r'[^\w\s-]', '', current_user.full_name or 'student')
+        safe_name = safe_name.replace(' ', '_')[:50]
+        filename = f"shadow-cgpa-{safe_name}.xlsx"
+
+        return Response(
+            content=xlsx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        logger.error("XLSX export error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to export Excel file")

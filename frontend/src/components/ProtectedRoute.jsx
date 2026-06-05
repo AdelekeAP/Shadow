@@ -33,7 +33,7 @@ export default function ProtectedRoute({ children }) {
 
   return (
     <>
-      {user && user.email_verified === false && !bannerDismissed && (
+      {user && user.email_verified === false && user.email_delivery_enabled && !bannerDismissed && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between text-sm">
           <span className="text-amber-800">
             Please verify your email address.{' '}

@@ -352,7 +352,7 @@ function DashboardPage() {
       <main className="mx-auto max-w-[1360px] px-5 py-6">
 
         {/* Email verification — branded, non-blocking */}
-        {user && user.email_verified === false && !verifyDismissed && (
+        {user && user.email_verified === false && user.email_delivery_enabled && !verifyDismissed && (
           <div className="mb-5 rounded-2xl border border-navy-200/40 overflow-hidden animate-fade-up" role="alert" style={{ background: 'linear-gradient(135deg, #f0f4ff 0%, #f8f9fb 50%, #fff9eb 100%)' }}>
             <div className="flex items-start gap-4 p-4 sm:p-5">
               {/* Icon container */}
