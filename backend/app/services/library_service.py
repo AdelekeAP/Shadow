@@ -359,16 +359,23 @@ def contribute_to_library(
 
         # Convert PPTX to PDF for in-browser viewing
         converted_pdf_path = None
+        converted_pdf_bytes = None
         if file_type.lower() in ['pptx', 'ppt']:
             try:
                 logger.info(f"🔄 Converting {file_type.upper()} to PDF for viewing...")
                 converted_pdf_path = convert_pptx_to_pdf(file_path)
                 logger.info(f"✅ Converted PDF saved: {converted_pdf_path}")
+                # Read the converted bytes so the PDF survives an ephemeral-disk wipe too
+                if converted_pdf_path and os.path.exists(converted_pdf_path):
+                    with open(converted_pdf_path, 'rb') as cf:
+                        converted_pdf_bytes = cf.read()
             except Exception as e:
                 logger.warning(f"⚠️ Failed to convert PPTX to PDF: {e}")
                 logger.warning("   Document will be available for download only")
 
-        # Create library document entry
+        # Create library document entry.
+        # file_data holds the durable bytes (Railway's disk is ephemeral); file_path is a local
+        # fallback only. See LibraryDocument model for why the bytes live in the DB.
         library_doc = LibraryDocument(
             course_id=course_id,
             week_number=week_number,
@@ -377,6 +384,8 @@ def contribute_to_library(
             file_path=file_path,
             file_type=file_type,
             file_size=len(file_content),
+            file_data=file_content,
+            converted_pdf_data=converted_pdf_bytes,
             content_hash=content_hash,
             extracted_text=extracted_text,
             key_topics=key_topics or [],

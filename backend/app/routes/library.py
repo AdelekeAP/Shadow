@@ -3,7 +3,7 @@ Library API Routes - Learning Library Endpoints
 Student-powered resource sharing system
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -74,6 +74,21 @@ def _check_document_access(document: LibraryDocument, user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This document is pending security review"
         )
+
+
+def _serve_bytes(db: Session, document_id: str, data: bytes, content_type: str,
+                 file_name: str, inline: bool) -> Response:
+    """Serve file bytes stored in the DB, incrementing the appropriate counter."""
+    if inline:
+        increment_view_count(db, document_id)
+    else:
+        increment_download_count(db, document_id)
+    disposition = "inline" if inline else "attachment"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'{disposition}; filename="{file_name}"'}
+    )
 
 
 @router.get(
@@ -317,47 +332,44 @@ async def view_library_document(
 
         _check_document_access(document, current_user)
 
-        # For PPTX files, serve the converted PDF if available
-        file_to_serve = document.file_path
         serving_file_name = document.file_name
-        content_type = 'application/octet-stream'
+        content_type = 'application/pdf'
+        is_pptx = document.file_type.lower() in ['pptx', 'ppt']
 
-        if document.file_type.lower() in ['pptx', 'ppt']:
+        if is_pptx:
+            # PPTX is only viewable in-browser via its converted PDF (bytes preferred, disk fallback)
+            serving_file_name = os.path.splitext(document.file_name)[0] + '.pdf'
+            if document.converted_pdf_data:
+                return _serve_bytes(db, document_id, document.converted_pdf_data,
+                                    'application/pdf', serving_file_name, inline=True)
             if document.converted_pdf_path and os.path.exists(document.converted_pdf_path):
-                # Serve the converted PDF for in-browser viewing
-                file_to_serve = document.converted_pdf_path
-                content_type = 'application/pdf'
-                # Keep original filename but as PDF
-                serving_file_name = os.path.splitext(document.file_name)[0] + '.pdf'
-                logger.info(f"Serving converted PDF for {document.file_name}")
-            else:
-                # No converted PDF available
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="PowerPoint file cannot be viewed in-browser. Converted PDF not available. Please use the download option."
+                increment_view_count(db, document_id)
+                return FileResponse(
+                    path=document.converted_pdf_path,
+                    media_type='application/pdf',
+                    headers={"Content-Disposition": f'inline; filename="{serving_file_name}"'}
                 )
-        else:
-            # For PDF files, serve directly
-            content_type = 'application/pdf'
-
-        # Check if file exists
-        if not os.path.exists(file_to_serve):
-            logger.error(f"File not found on disk: {file_to_serve}")
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="File not found on server"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="PowerPoint file cannot be viewed in-browser. Converted PDF not available. Please use the download option."
             )
 
-        # Increment view count
-        increment_view_count(db, document_id)
+        # PDF (and anything else): serve the durable DB bytes, falling back to local disk
+        if document.file_data:
+            return _serve_bytes(db, document_id, document.file_data,
+                                content_type, serving_file_name, inline=True)
+        if document.file_path and os.path.exists(document.file_path):
+            increment_view_count(db, document_id)
+            return FileResponse(
+                path=document.file_path,
+                media_type=content_type,
+                headers={"Content-Disposition": f'inline; filename="{serving_file_name}"'}
+            )
 
-        # Return file for inline viewing
-        return FileResponse(
-            path=file_to_serve,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f'inline; filename="{serving_file_name}"'
-            }
+        logger.error(f"No file bytes or disk file for document {document_id} ({document.file_path})")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on server"
         )
 
     except HTTPException:
@@ -402,22 +414,26 @@ async def download_library_document(
 
         _check_document_access(document, current_user)
 
-        # Check if file exists
-        if not os.path.exists(document.file_path):
-            logger.error(f"File not found on disk: {document.file_path}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="File not found on server"
+        # Serve the durable DB bytes, falling back to local disk for legacy/local files
+        if document.file_data:
+            increment_download_count(db, document_id)
+            return Response(
+                content=document.file_data,
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'}
+            )
+        if document.file_path and os.path.exists(document.file_path):
+            increment_download_count(db, document_id)
+            return FileResponse(
+                path=document.file_path,
+                filename=document.file_name,
+                media_type="application/octet-stream"
             )
 
-        # Increment download count
-        increment_download_count(db, document_id)
-
-        # Return file
-        return FileResponse(
-            path=document.file_path,
-            filename=document.file_name,
-            media_type="application/octet-stream"
+        logger.error(f"No file bytes or disk file for document {document_id} ({document.file_path})")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on server"
         )
 
     except HTTPException:
