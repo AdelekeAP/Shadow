@@ -60,18 +60,39 @@ class ContentCurator:
 
         # Get YouTube videos (pass subtopics for more specific searches)
         # Use full quality mode (transcripts + comments) for better curation
-        try:
-            videos = self.youtube.get_curated_videos(
+        def _fetch_videos(fast: bool):
+            return self.youtube.get_curated_videos(
                 topic=topic,
                 max_results=max_results * 2,  # Get extra for filtering
                 min_quality_score=min_quality_score,
-                fast_mode=False,  # Full quality: transcripts + comment analysis
+                fast_mode=fast,
                 subtopics=subtopics or []
             )
+
+        try:
+            videos = _fetch_videos(fast=False)  # Full quality: transcripts + comment analysis
+            # Graceful fallback: full mode depends on transcripts/comments which are
+            # frequently unavailable on cloud hosts (e.g. Railway). When that enrichment
+            # fails, quality scores collapse below threshold and every video is filtered
+            # out, leaving plans with no videos. Fast mode scores on view/like/comment
+            # metadata only, so retry there so videos still attach.
+            if not videos:
+                logger.warning(
+                    f"Full-mode YouTube curation returned 0 videos for '{topic}'; "
+                    "falling back to fast mode (metadata-only scoring)"
+                )
+                videos = _fetch_videos(fast=True)
             results['videos'] = videos[:max_results]
             logger.info(f"Found {len(results['videos'])} high-quality YouTube videos")
         except Exception as e:
             logger.error(f"Error fetching YouTube videos: {e}")
+            # Last-resort fallback after an exception in full mode
+            try:
+                videos = _fetch_videos(fast=True)
+                results['videos'] = videos[:max_results]
+                logger.info(f"Fast-mode fallback recovered {len(results['videos'])} YouTube videos")
+            except Exception as e2:
+                logger.error(f"Fast-mode YouTube fallback also failed: {e2}")
 
         # Get Reddit resources (gracefully handle if not configured)
         try:
