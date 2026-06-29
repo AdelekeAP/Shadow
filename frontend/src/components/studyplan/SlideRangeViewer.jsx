@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
-import 'react-pdf/dist/Page/AnnotationLayer.css'
-import 'react-pdf/dist/Page/TextLayer.css'
+// Text + annotation layers are disabled on <Page> (renderTextLayer/renderAnnotationLayer=false)
+// to prevent the text-layer doubling bug, so their CSS is intentionally NOT imported.
 
 // Configure pdf.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(

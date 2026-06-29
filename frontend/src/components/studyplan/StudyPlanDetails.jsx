@@ -723,8 +723,10 @@ export default function StudyPlanDetails({ plan, onDayComplete, onPlayVideo, onS
                                         setSectionQuizLoading(key)
                                         try {
                                           const quizResult = await generateSectionQuiz(plan.id, activity.page_range || null, activity.description || '', 5)
-                                          if (quizResult?.quiz_id) {
-                                            onTakeQuiz({ ...plan, _sectionQuizId: quizResult.quiz_id, _sectionLabel: activity.page_range ? `Pages ${activity.page_range}` : 'Section' })
+                                          // API returns the quiz object with `id` (older callers expected `quiz_id`).
+                                          const sectionQuizId = quizResult?.id || quizResult?.quiz_id
+                                          if (sectionQuizId) {
+                                            onTakeQuiz({ ...plan, _sectionQuizId: sectionQuizId, _sectionLabel: activity.page_range ? `Pages ${activity.page_range}` : 'Section' })
                                           }
                                         } catch (err) {
                                           console.error('Section quiz generation failed:', err)
