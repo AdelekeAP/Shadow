@@ -484,6 +484,12 @@ async def generate_study_plan(
         style_recommendation = None
         user_selected_style = learning_style  # Capture what user originally picked
 
+        # Normalize the stored profile value "auditory" to the generator's internal
+        # "audio" so the audio-specific resource handling fires instead of falling
+        # through to the generic else branch. (Profile column is left unchanged.)
+        if learning_style == "auditory":
+            learning_style = "audio"
+
         # Smart auto: when learning_style is None and we have slide content,
         # use content analysis to pick the best default style
         if learning_style is None and slide_content:
