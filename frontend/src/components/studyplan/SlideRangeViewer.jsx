@@ -239,6 +239,14 @@ export default function SlideRangeViewer({ documentUrl, pageRange, onClose }) {
               <Page
                 pageNumber={currentPage}
                 scale={scale}
+                /* Render the slide as an image-only canvas. The selectable pdf.js
+                   text layer was inheriting the app's navy text color (its
+                   `color: transparent` rule was being overridden), painting a
+                   second visible copy of the text over the canvas — the doubling
+                   bug. We don't need text selection in the viewer, so disabling
+                   both overlays makes the doubling impossible. */
+                renderTextLayer={false}
+                renderAnnotationLayer={false}
                 loading={
                   <div className="flex items-center gap-2 py-12">
                     <div className="w-4 h-4 border-2 border-navy-300 border-t-navy-600 rounded-full animate-spin" />
