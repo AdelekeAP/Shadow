@@ -97,7 +97,8 @@ def check_duplicate_document(
     db: Session,
     content_hash: str,
     course_id: str,
-    week_number: Optional[int] = None
+    week_number: Optional[int] = None,
+    requesting_user_id: Optional[str] = None
 ) -> Optional[LibraryDocument]:
     """
     Check if document already exists in library
@@ -107,9 +108,15 @@ def check_duplicate_document(
         content_hash: SHA-256 hash of file content
         course_id: Course UUID
         week_number: Optional week number
+        requesting_user_id: The user attempting the upload. A duplicate is only
+            reused if the requester can actually access it (they own it, or it is
+            public). Reusing ANOTHER user's PRIVATE doc would link the requester's
+            plan to a doc they can't view (403). In that case we return None so the
+            caller creates a separate per-user copy. This does NOT broaden access:
+            a non-uploader still cannot reach anyone's private doc.
 
     Returns:
-        Existing LibraryDocument if found, None otherwise
+        Existing LibraryDocument if found AND accessible to the requester, else None
     """
     try:
         query = db.query(LibraryDocument).filter(
@@ -126,6 +133,15 @@ def check_duplicate_document(
         existing = query.first()
 
         if existing:
+            # Don't reuse another user's PRIVATE doc — the requester couldn't view it.
+            if (requesting_user_id is not None
+                    and not existing.is_public
+                    and str(existing.uploaded_by) != str(requesting_user_id)):
+                logger.info(
+                    f"📋 Hash matches a private doc owned by another user "
+                    f"({existing.file_name}); creating a separate copy for the uploader"
+                )
+                return None
             logger.info(f"📋 Duplicate detected: {existing.file_name} (uploaded by {existing.uploader.full_name})")
 
         return existing
@@ -325,8 +341,9 @@ def contribute_to_library(
         # Calculate hash
         content_hash = calculate_file_hash(file_content)
 
-        # Check for duplicates
-        existing = check_duplicate_document(db, content_hash, course_id, week_number)
+        # Check for duplicates (scoped so a 2nd uploader isn't linked to another
+        # user's private doc — they get their own viewable copy instead)
+        existing = check_duplicate_document(db, content_hash, course_id, week_number, requesting_user_id=user_id)
 
         if existing:
             return {
