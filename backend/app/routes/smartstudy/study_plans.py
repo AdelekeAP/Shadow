@@ -51,7 +51,7 @@ router = APIRouter()
 
 class AudioRequest(BaseModel):
     activity_description: str = ""
-    page_range: str = None
+    page_range: Optional[str] = None  # frontend always sends this key (often null); must accept null
     is_primary: bool = True  # True = first audio of the day (ElevenLabs), False = secondary (OpenAI nova)
 
 
