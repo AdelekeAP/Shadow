@@ -35,4 +35,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["gunicorn", "app.main:app", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "120"]
+# --forwarded-allow-ips '*' makes the worker trust Railway's proxy headers
+# (X-Forwarded-Proto) so FastAPI 307 trailing-slash redirects preserve https
+# instead of emitting http:// (which browsers block as mixed content).
+CMD ["gunicorn", "app.main:app", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "120", "--forwarded-allow-ips", "*"]
