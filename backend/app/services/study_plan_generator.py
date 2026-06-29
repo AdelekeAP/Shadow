@@ -557,8 +557,12 @@ async def generate_study_plan(
                 ],
                 models=PLAN_MODELS,
                 temperature=0.7,
-                max_tokens=4000,
-                timeout=60.0,
+                # 8000 (was 4000): large slide-grounded plans (e.g. a 28-slide deck over
+                # 12-14 days) produce ~3.8k-6.4k output tokens and were truncating at the
+                # 4k cap, yielding invalid JSON. 8k fits the largest 14-day plan with margin
+                # and stays within all PLAN_MODELS' output limits.
+                max_tokens=8000,
+                timeout=90.0,
                 stream=False,
             )
 
