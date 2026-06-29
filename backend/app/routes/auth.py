@@ -44,6 +44,18 @@ from app.utils.refresh_token import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# TODO revert after defense (2026-06-28): the 5 demo accounts are exempt from the
+# failed-login lockout so a mistyped password during the live demo can't lock them
+# out for 15 minutes. To restore normal lockout for everyone, delete this set and
+# the single `_DEMO_NO_LOCKOUT` guard in `login()` below.
+_DEMO_NO_LOCKOUT = {
+    "paul.aladenusi@pau.edu.ng",
+    "therese.mbama@pau.edu.ng",
+    "oluwafunbi.onaeko@pau.edu.ng",
+    "oluwademilade.somide@pau.edu.ng",
+    "mirireoluwa.olukanni@pau.edu.ng",
+}
+
 
 @router.post(
     "/register",
@@ -316,9 +328,11 @@ async def _do_login(credentials: UserLogin, db: Session, request: Request) -> To
 
     # Verify password
     if not verify_password(credentials.password, user.password_hash):
-        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-        if user.failed_login_attempts >= 5:
-            user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+        # TODO revert after defense: demo accounts never accrue lockout (see _DEMO_NO_LOCKOUT)
+        if (user.email or "").lower() not in _DEMO_NO_LOCKOUT:
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+            if user.failed_login_attempts >= 5:
+                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
         try:
             db.commit()
         except Exception:
