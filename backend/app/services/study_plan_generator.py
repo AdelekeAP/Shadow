@@ -537,33 +537,48 @@ async def generate_study_plan(
             learning_style=learning_style,
         )
 
-        # Call GPT-4 Turbo with retry/fallback (offload to thread to avoid blocking event loop)
-        response = await asyncio.to_thread(
-            call_with_retry,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert educational planner. Generate detailed, personalized study plans in strict JSON format. IMPORTANT: Complete the entire JSON response without truncation."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            models=PLAN_MODELS,
-            temperature=0.7,
-            max_tokens=4000,
-            timeout=60.0,
-            stream=False,
-        )
+        # Call GPT-4 Turbo with retry/fallback (offload to thread to avoid blocking event loop).
+        # Retry on malformed/truncated JSON: LLMs occasionally return invalid JSON, which would
+        # otherwise 500 a live generation. Re-prompt up to 2 times before giving up.
+        plan_data = None
+        json_parse_err = None
+        for json_attempt in range(1, 3):
+            response = await asyncio.to_thread(
+                call_with_retry,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert educational planner. Generate detailed, personalized study plans in strict JSON format. IMPORTANT: Complete the entire JSON response without truncation."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                models=PLAN_MODELS,
+                temperature=0.7,
+                max_tokens=4000,
+                timeout=60.0,
+                stream=False,
+            )
 
-        gpt_response = response.choices[0].message.content
-        tokens_used = response.usage.total_tokens
+            gpt_response = response.choices[0].message.content
+            tokens_used = response.usage.total_tokens
+            logger.info(f"📊 GPT-4 response received ({tokens_used} tokens, attempt {json_attempt})")
 
-        logger.info(f"📊 GPT-4 response received ({tokens_used} tokens)")
+            # Parse GPT-4 response
+            try:
+                plan_data = parse_study_plan_json(gpt_response)
+                break
+            except ValueError as parse_err:
+                json_parse_err = parse_err
+                if json_attempt < 2:
+                    logger.warning(f"Study plan JSON parse failed (attempt {json_attempt}/2): {parse_err}; regenerating")
+                else:
+                    logger.error(f"Study plan JSON parse failed after 2 attempts: {parse_err}")
 
-        # Parse GPT-4 response
-        plan_data = parse_study_plan_json(gpt_response)
+        if plan_data is None:
+            raise json_parse_err
 
         # Validate slide grounding
         grounding_result = validate_slide_grounding(plan_data, bool(slide_content))
@@ -879,7 +894,15 @@ async def generate_study_plan(
                     # For audio activities without a video — assign docs/articles
                     # AudioPlayer generates audio summaries from these on the frontend
                     if not matched_resource and activity_type == "audio":
-                        if doc_idx < len(documentation_resources) and (article_idx >= len(article_resources) or doc_idx <= article_idx):
+                        # Audio learners: uploaded slides power BOTH the audio summaries and the
+                        # inline slide viewer ("Pages X-Y" buttons). Attach the slides like reading
+                        # does so audio plans surface a usable uploaded_slides resource (otherwise
+                        # the Pages buttons render with no docUrl and open nothing).
+                        if uploaded_doc_resource and slide_assignments_used < max_slide_assignments:
+                            matched_resource = uploaded_doc_resource
+                            resource_type_override = 'uploaded_slides'
+                            slide_assignments_used += 1
+                        elif doc_idx < len(documentation_resources) and (article_idx >= len(article_resources) or doc_idx <= article_idx):
                             matched_resource = documentation_resources[doc_idx]
                             resource_type_override = 'documentation'
                             doc_idx += 1
